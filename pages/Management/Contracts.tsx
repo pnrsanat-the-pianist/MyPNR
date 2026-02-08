@@ -5,6 +5,8 @@ import {
   Search, X, RefreshCcw, Download
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 // --- Types ---
 
@@ -87,9 +89,56 @@ const Contracts: React.FC = () => {
 
   const componentRef = useRef<HTMLDivElement>(null);
 
-  // Native Print Function
-  const handlePrint = () => {
-    window.print();
+  // PDF Generation Function
+  const handleDownloadPDF = async () => {
+    if (!componentRef.current) return;
+
+    setLoading(true);
+    try {
+      const element = componentRef.current;
+
+      // Use html2canvas to capture the A4 preview element
+      // Increase scale for better PDF quality
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+
+      // Create jsPDF instance (A4 size)
+      const pdf = new jsPDF({
+        orientation: 'p',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+
+      // Calculate dimensions to fit image to A4
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+
+      const finalWidth = imgWidth * ratio;
+      const finalHeight = imgHeight * ratio;
+
+      pdf.addImage(imgData, 'PNG', 0, 0, finalWidth, finalHeight);
+
+      // Save the PDF
+      const fileName = `Sozlesme_${formData.studentName.replace(/\s+/g, '_')}_${new Date().toLocaleDateString('tr-TR').replace(/\./g, '_')}.pdf`;
+      pdf.save(fileName);
+
+      alert('Sözleşme PDF olarak indirildi.');
+    } catch (err: any) {
+      console.error('PDF Generation Error:', err);
+      alert('PDF oluşturulurken bir hata oluştu: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // --- Data Fetching ---
@@ -256,110 +305,104 @@ const Contracts: React.FC = () => {
   // --- Contract Preview Component ---
   // Added id="contract-preview" for specific printing logic via index.html CSS
   const ContractDocument = React.forwardRef<HTMLDivElement>((props, ref) => (
-    <div id="contract-preview" ref={ref} className="bg-white text-black p-8 md:p-12 shadow-2xl max-w-[210mm] min-h-[297mm] mx-auto text-sm leading-relaxed relative print:shadow-none print:w-full print:max-w-none print:h-auto">
+    <div id="contract-preview" ref={ref} className="bg-white text-black p-10 md:p-14 shadow-2xl max-w-[210mm] min-h-[297mm] mx-auto text-[13px] leading-relaxed relative print:shadow-none print:w-full print:max-w-none print:h-auto font-sans">
 
       {/* Header */}
-      <div className="flex items-center gap-4 mb-8 border-b-2 border-slate-800 pb-4">
-        {/* Updated Logo Section */}
-        <div className="shrink-0">
-          <img
-            src="https://pnrsanatakademisi.com/wp-content/uploads/2020/09/logo.png"
-            alt="PNR Sanat Akademisi"
-            className="h-20 w-auto object-contain"
-            onError={(e) => {
-              // Fallback if image fails to load
-              e.currentTarget.style.display = 'none';
-              e.currentTarget.nextElementSibling?.classList.remove('hidden');
-            }}
-          />
-          {/* Fallback Icon */}
-          <div className="w-20 h-20 bg-slate-900 rounded-full hidden flex items-center justify-center text-white font-bold text-3xl">P</div>
+      <div className="flex items-center justify-between mb-8 border-b-2 border-slate-900 pb-6">
+        <div className="flex items-center gap-6">
+          <div className="w-20 h-20 bg-pnr-dark rounded-full flex items-center justify-center text-white font-bold text-4xl shadow-lg shrink-0">P</div>
+          <div>
+            <h1 className="text-3xl font-bold uppercase tracking-tighter text-pnr-purple leading-none">PNR SANAT AKADEMİSİ</h1>
+            <p className="text-[11px] text-slate-600 uppercase tracking-[0.2em] font-bold mt-1">MEB KADIKÖY ÖZEL PINAR SANAT BALE VE MÜZİK OKULU</p>
+          </div>
         </div>
-
-        <div>
-          <h1 className="text-2xl font-bold uppercase tracking-wider text-pnr-purple">PNR Sanat Akademisi</h1>
-          <p className="text-xs text-slate-500 uppercase tracking-widest font-bold">MEB Kadıköy Özel Pınar Sanat Bale ve Müzik Okulu</p>
-        </div>
-        <div className="ml-auto text-right text-xs text-slate-500">
+        <div className="text-right text-[11px] text-slate-500 font-medium">
           <p>Tarih: {new Date().toLocaleDateString('tr-TR')}</p>
           <p>No: {Date.now().toString().slice(-6)}</p>
         </div>
       </div>
 
-      <h2 className="text-center font-bold text-lg mb-6 uppercase border-b border-slate-200 pb-2">Öğrenci Kayıt Sözleşmesi</h2>
+      <div className="text-center mb-8">
+        <h2 className="inline-block font-bold text-xl uppercase tracking-widest border-b-4 border-pnr-purple/20 pb-1">ÖĞRENCİ KAYIT SÖZLEŞMESİ</h2>
+      </div>
 
       {/* Student Info Table */}
-      <div className="mb-6 border border-slate-300 rounded-lg overflow-hidden">
-        <div className="grid grid-cols-4 bg-slate-100 border-b border-slate-300 text-xs font-bold uppercase print:bg-slate-200">
-          <div className="p-2 border-r border-slate-300">Öğrenci Adı</div>
-          <div className="p-2 border-r border-slate-300">TC Kimlik</div>
-          <div className="p-2 border-r border-slate-300">Doğum Tarihi</div>
-          <div className="p-2">Branş</div>
+      <div className="mb-8 border border-slate-300 rounded-xl overflow-hidden shadow-sm">
+        <div className="grid grid-cols-4 bg-slate-50 border-b border-slate-300 text-[10px] font-bold uppercase tracking-wider print:bg-slate-100">
+          <div className="p-3 border-r border-slate-300">ÖĞRENCİ ADI</div>
+          <div className="p-3 border-r border-slate-300">TC KİMLİK</div>
+          <div className="p-3 border-r border-slate-300">DOĞUM TARİHİ</div>
+          <div className="p-3">BRANŞ</div>
         </div>
-        <div className="grid grid-cols-4 text-sm">
-          <div className="p-2 border-r border-slate-300 font-medium">{formData.studentName || '................................'}</div>
-          <div className="p-2 border-r border-slate-300 font-mono">{formData.studentTc || '...................'}</div>
-          <div className="p-2 border-r border-slate-300">{formData.studentDob ? new Date(formData.studentDob).toLocaleDateString('tr-TR') : '.../.../....'}</div>
-          <div className="p-2 font-bold">{formData.branch || '...................'}</div>
+        <div className="grid grid-cols-4 text-sm font-bold bg-white">
+          <div className="p-3 border-r border-slate-300 uppercase">{formData.studentName || '—'}</div>
+          <div className="p-3 border-r border-slate-300 font-mono tracking-tighter">{formData.studentTc || '—'}</div>
+          <div className="p-3 border-r border-slate-300">{formData.studentDob ? new Date(formData.studentDob).toLocaleDateString('tr-TR') : '—'}</div>
+          <div className="p-3 text-pnr-purple uppercase">{formData.branch || '—'}</div>
         </div>
       </div>
 
       {/* Contract Body */}
-      <div className="space-y-4 text-xs text-justify">
+      <div className="space-y-6 text-slate-800 text-justify mb-10">
 
         <section>
-          <h3 className="font-bold text-sm mb-1 uppercase text-slate-800">1. Genel Hükümler</h3>
-          <p className="whitespace-pre-line">{settings.generalRules}</p>
+          <h3 className="font-bold text-sm mb-2 uppercase text-slate-900 flex items-center gap-2">1. GENEL HÜKÜMLER</h3>
+          <p className="whitespace-pre-line pl-2 leading-relaxed opacity-90">{settings.generalRules}</p>
         </section>
 
         <section>
-          <h3 className="font-bold text-sm mb-1 uppercase text-slate-800">2. Tatil ve Çalışma Takvimi</h3>
-          <p className="whitespace-pre-line">{settings.holidayDates}</p>
+          <h3 className="font-bold text-sm mb-2 uppercase text-slate-900 flex items-center gap-2">2. TATİL VE ÇALIŞMA TAKVİMI</h3>
+          <p className="whitespace-pre-line pl-2 leading-relaxed opacity-90">{settings.holidayDates}</p>
         </section>
 
         <section>
-          <h3 className="font-bold text-sm mb-1 uppercase text-slate-800">3. {formData.branch || 'Branş'} Bölümü Özel Kuralları</h3>
-          <p className="whitespace-pre-line">{getBranchRuleText()}</p>
+          <h3 className="font-bold text-sm mb-2 uppercase text-slate-900 flex items-center gap-2">3. {formData.branch || 'BRANŞ'} BÖLÜMÜ ÖZEL KURALLARI</h3>
+          <p className="whitespace-pre-line pl-2 leading-relaxed opacity-90 font-medium text-pnr-indigo">{getBranchRuleText()}</p>
         </section>
 
         <section>
-          <h3 className="font-bold text-sm mb-1 uppercase text-slate-800">4. Ücretlendirme ve İade</h3>
-          <p className="whitespace-pre-line">{settings.paymentPolicy}</p>
+          <h3 className="font-bold text-sm mb-2 uppercase text-slate-900 flex items-center gap-2">4. ÜCRETLENDİRME VE İADE</h3>
+          <p className="whitespace-pre-line pl-2 leading-relaxed opacity-90">{settings.paymentPolicy}</p>
         </section>
 
-        <div className="mt-4 p-3 bg-slate-50 border border-slate-200 text-[10px] italic">
+        <div className="mt-8 p-4 bg-slate-50 rounded-xl border border-slate-200 text-[11px] italic text-slate-600 line-clamp-3 leading-snug">
           * İşbu sözleşme, kurum ve veli arasında karşılıklı mutabakat ile imzalanmıştır. Veli, yukarıdaki maddeleri okuduğunu ve kabul ettiğini beyan eder.
-          Eğitim başlangıç tarihi: <strong>{formData.startDate ? new Date(formData.startDate).toLocaleDateString('tr-TR') : '.../.../....'}</strong>
+          Eğitim başlangıç tarihi: <strong className="text-pnr-purple">{formData.startDate ? new Date(formData.startDate).toLocaleDateString('tr-TR') : '.../.../....'}</strong>
         </div>
 
       </div>
 
       {/* Signature Area */}
-      <div className="mt-12 flex justify-between items-start">
-        <div className="text-center w-1/3">
-          <p className="font-bold mb-8">Kurum Yetkilisi</p>
-          <div className="h-16"></div>
-          <p className="text-xs">Kaşe / İmza</p>
+      <div className="mt-auto flex justify-between items-end gap-10">
+        <div className="text-center w-1/3 pb-10">
+          <p className="font-bold text-sm mb-16 uppercase text-slate-900">Kurum Yetkilisi</p>
+          <div className="border-t border-slate-300 pt-2">
+            <p className="text-[10px] uppercase font-bold text-slate-400 tracking-tighter">Kaşe / İmza</p>
+          </div>
         </div>
 
-        <div className="w-1/3 border border-slate-300 rounded-lg p-4 bg-slate-50 print:bg-transparent">
-          <p className="font-bold text-sm mb-2 uppercase border-b border-slate-200 pb-1">Veli Bilgileri & Onay</p>
-          <div className="space-y-1 text-xs mb-8">
-            <div className="flex justify-between">
-              <span className="text-slate-500">Ad Soyad:</span>
-              <span className="font-bold">{formData.parentName || '.......................'}</span>
+        <div className="w-[45%] border-2 border-pnr-purple/10 rounded-2xl p-6 bg-slate-50/50 relative overflow-hidden print:bg-slate-50">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-pnr-purple/5 rounded-full -mr-12 -mt-12"></div>
+
+          <h4 className="font-bold text-sm mb-4 uppercase text-pnr-purple border-b border-pnr-purple/10 pb-2">VELİ BİLGİLERİ & ONAY</h4>
+
+          <div className="space-y-3 text-xs mb-10 relative z-10">
+            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-1">
+              <span className="text-slate-500 font-medium">Ad Soyad:</span>
+              <span className="font-bold text-slate-900 uppercase">{formData.parentName || '.......................'}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">TC Kimlik:</span>
-              <span className="font-mono">{formData.parentTc || '.......................'}</span>
+            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-1">
+              <span className="text-slate-500 font-medium">TC Kimlik:</span>
+              <span className="font-mono font-bold">{formData.parentTc || '.......................'}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Telefon:</span>
-              <span className="font-mono">{formData.parentPhone || '.......................'}</span>
+            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-1">
+              <span className="text-slate-500 font-medium">Telefon:</span>
+              <span className="font-mono font-bold">{formData.parentPhone || '.......................'}</span>
             </div>
           </div>
-          <div className="text-center pt-4 border-t border-slate-200 border-dashed">
-            <p className="text-xs font-bold text-slate-400">İmza</p>
+
+          <div className="text-center pt-4 border-t-2 border-slate-200 border-dotted mt-4">
+            <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">İmza</p>
           </div>
         </div>
       </div>
@@ -517,22 +560,25 @@ const Contracts: React.FC = () => {
 
             <div>
               <button
-                onClick={handlePrint}
+                onClick={handleDownloadPDF}
                 disabled={!selectedStudentId}
-                className="w-full bg-gradient-to-r from-pnr-purple to-pnr-indigo hover:from-pnr-indigo hover:to-pnr-purple text-white font-bold py-3.5 rounded-xl shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-3 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-gradient-to-r from-pnr-purple to-pnr-indigo hover:from-pnr-indigo hover:to-pnr-purple text-white font-bold py-3.5 rounded-xl shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-3 transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               >
-                <Download size={20} />
+                <Printer size={20} />
                 PDF İndir / Yazdır
               </button>
-              <p className="text-xs text-center text-slate-400 mt-2">
-                PDF olarak kaydetmek için yazdır ekranında 'PDF olarak kaydet' seçeneğini kullanın.
-              </p>
+              <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-start gap-2">
+                  <CheckCircle2 size={14} className="text-pnr-green shrink-0 mt-0.5" />
+                  <span>PDF olarak kaydetmek için açılan yazdır ekranında hedef yazıcıyı <strong>"PDF Olarak Kaydet"</strong> seçiniz.</span>
+                </p>
+              </div>
             </div>
           </div>
 
           {/* Right: Preview (A4 Paper Look) */}
-          <div className="lg:col-span-8 overflow-x-auto bg-slate-200/50 dark:bg-black/20 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 flex justify-center">
-            <div className="scale-[0.8] md:scale-100 origin-top">
+          <div className="lg:col-span-8 overflow-x-auto bg-slate-200/50 dark:bg-black/20 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 flex justify-center custom-scrollbar">
+            <div className="scale-[0.8] md:scale-100 origin-top shadow-inner p-4">
               <ContractDocument ref={componentRef} />
             </div>
           </div>

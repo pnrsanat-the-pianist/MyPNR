@@ -361,6 +361,25 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
     }
   };
 
+  const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
+    e.stopPropagation();
+    if (!canEdit) return;
+
+    if (window.confirm(`${name} isimli öğrenciyi ve tüm kayıtlarını kalıcı olarak silmek istediğinize emin misiniz?`)) {
+      setLoading(true);
+      try {
+        const { error } = await supabase.from('students').delete().eq('id', id);
+        if (error) throw error;
+        setEnrollments(prev => prev.filter(item => item.id !== id));
+      } catch (err: any) {
+        console.error('Delete Error:', err.message);
+        alert('Silme işlemi sırasında hata: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
   // ... (Form State Handlers - Same as before) ...
   const handleStudentChange = (field: string, value: string) => setStudentInfo(prev => ({ ...prev, [field]: value }));
   const handleBranchChange = (index: number, field: keyof BranchSelection, value: string) => {
@@ -607,6 +626,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
           <table className="w-full text-left border-collapse min-w-[1000px]">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+                {canEdit && <th className="p-4 w-12 text-center">Sil</th>}
                 <th className="p-4 w-10"></th>
                 <th className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('name')}>
                   <div className="flex items-center">Öğrenci <SortIcon columnKey="name" /></div>
@@ -634,6 +654,17 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
                       onClick={() => toggleRow(item.id)}
                       className={`group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer ${expandedRows.includes(item.id) ? 'bg-slate-50 dark:bg-slate-800/30' : ''}`}
                     >
+                      {canEdit && (
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={(e) => handleDelete(e, item.id, item.name)}
+                            className="text-slate-400 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                            title="Öğrenciyi Sil"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </td>
+                      )}
                       <td className="p-4 text-slate-400">
                         {expandedRows.includes(item.id) ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
                       </td>
@@ -674,7 +705,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
 
                     {expandedRows.includes(item.id) && (
                       <tr className="bg-slate-50/50 dark:bg-slate-800/20 border-b border-slate-100 dark:border-slate-800">
-                        <td colSpan={canEdit ? 9 : 8} className="p-0">
+                        <td colSpan={canEdit ? 10 : 8} className="p-0">
                           <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in slide-in-from-top-2">
 
                             <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
@@ -730,7 +761,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
                   </React.Fragment>
                 ))
               ) : (
-                <tr><td colSpan={canEdit ? 9 : 8} className="p-8 text-center text-slate-500">Kayıt bulunamadı.</td></tr>
+                <tr><td colSpan={canEdit ? 10 : 8} className="p-8 text-center text-slate-500">Kayıt bulunamadı.</td></tr>
               )}
             </tbody>
           </table>
