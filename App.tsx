@@ -71,8 +71,8 @@ const App: React.FC = () => {
   const fetchPermissions = async (role: UserRole) => {
     // Admin always has full access, skip DB check to prevent lockout
     if (role === UserRole.ADMIN) {
-        setPermissions({}); // Empty object implies "Check Admin Logic" in components
-        return;
+      setPermissions({}); // Empty object implies "Check Admin Logic" in components
+      return;
     }
 
     setIsLoadingPermissions(true);
@@ -159,65 +159,65 @@ const App: React.FC = () => {
 
     // Helper to check View Permission and pass Edit Permission
     const renderProtectedPage = (resourceId: string, render: (canEdit: boolean) => React.ReactNode) => {
-       if (!canView(resourceId)) return <AccessDenied />;
-       return <>{render(getEditPermission(resourceId))}</>;
+      if (!canView(resourceId)) return <AccessDenied />;
+      return <>{render(getEditPermission(resourceId))}</>;
     };
 
     switch (pathBase) {
       // Dashboard is usually open, but checked against 'dashboard' key
-      case '/': 
+      case '/':
         return renderProtectedPage('dashboard', () => <Dashboard />);
-      
+
       // Management
-      case '/management/branches': 
-        return renderProtectedPage('branslar', (canEdit) => <Branches />); 
-      case '/management/teachers': 
+      case '/management/branches':
+        return renderProtectedPage('branslar', (canEdit) => <Branches canEdit={canEdit} />);
+      case '/management/teachers':
         return renderProtectedPage('ogretmenler', (canEdit) => <Teachers />);
-      case '/management/contracts': 
+      case '/management/contracts':
         return renderProtectedPage('sozlesmeler', (canEdit) => <Contracts />);
-      case '/management/todo': 
+      case '/management/todo':
         return renderProtectedPage('todo', (canEdit) => <Todo />);
-      
+
       // Education
-      case '/education/crm': 
+      case '/education/crm':
         return renderProtectedPage('crm', (canEdit) => <CRM canEdit={canEdit} />);
-      case '/education/leads': 
+      case '/education/leads':
         return renderProtectedPage('yeni-talep', (canEdit) => <Leads />);
-      case '/education/dance-classes': 
+      case '/education/dance-classes':
         return renderProtectedPage('bale-siniflari', (canEdit) => <DanceClasses />);
-      case '/education/instrument-lessons': 
+      case '/education/instrument-lessons':
         // Special case: Attendance passes currentUserRole inside, but we can also pass canEdit
         return renderProtectedPage('enstruman-dersleri', (canEdit) => <InstrumentLessons currentUserRole={userRole} canEdit={canEdit} />);
-      case '/education/schedule': 
+      case '/education/schedule':
         return renderProtectedPage('ders-programi', (canEdit) => <Schedule />);
-      
+
       // Finance
-      case '/finance/categories': 
+      case '/finance/categories':
         return renderProtectedPage('gelir-gider', (canEdit) => <FinanceCategories />);
-      case '/finance/cashbook': 
+      case '/finance/cashbook':
         return renderProtectedPage('kasa', (canEdit) => <CashBook />);
-      case '/finance/denizbank': 
+      case '/finance/denizbank':
         return renderProtectedPage('denizbank', (canEdit) => <Denizbank />);
-      case '/finance/denizbank-pos': 
+      case '/finance/denizbank-pos':
         return renderProtectedPage('denizbank-pos', (canEdit) => <DenizbankPOS />);
-      case '/finance/vakifbank': 
+      case '/finance/vakifbank':
         return renderProtectedPage('vakifbank', (canEdit) => <Vakifbank />);
-      case '/finance/profitability': 
+      case '/finance/profitability':
         return renderProtectedPage('karlilik', (canEdit) => <Profitability />);
-      case '/finance/salaries': 
+      case '/finance/salaries':
         return renderProtectedPage('maas', (canEdit) => <Salaries />);
-      case '/finance/banks': 
+      case '/finance/banks':
         return renderProtectedPage('denizbank', (canEdit) => <Banks />); // Reusing generic bank permission or specific
-      
+
       // System
-      case '/system/users': 
+      case '/system/users':
         return renderProtectedPage('kullanicilar', (canEdit) => <Users />);
-      case '/system/permissions': 
+      case '/system/permissions':
         return renderProtectedPage('yetkiler', (canEdit) => <Permissions currentUserRole={userRole} />);
-      case '/system/settings': 
+      case '/system/settings':
         return renderProtectedPage('ayarlar', (canEdit) => <Settings />);
-      
-      default: 
+
+      default:
         return <Dashboard />;
     }
   };
@@ -228,10 +228,10 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-pnr-dark transition-colors duration-300">
-      <Sidebar 
-        userRole={userRole} 
-        isOpen={isSidebarOpen} 
-        toggleSidebar={toggleSidebar} 
+      <Sidebar
+        userRole={userRole}
+        isOpen={isSidebarOpen}
+        toggleSidebar={toggleSidebar}
         onLogout={handleLogout}
         currentPath={currentPath}
         toggleTheme={toggleTheme}
@@ -241,34 +241,34 @@ const App: React.FC = () => {
 
       {/* Mobile Backdrop */}
       {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[65] md:hidden animate-in fade-in duration-300" 
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[65] md:hidden animate-in fade-in duration-300"
           onClick={toggleSidebar}
         />
       )}
 
       <div className={`transition-all duration-300 ${isSidebarOpen ? 'md:pl-64' : 'md:pl-20'}`}>
-        
+
         {/* Top Header */}
         <header className="h-16 md:h-20 bg-white/80 dark:bg-pnr-dark/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 flex items-center justify-between px-4 md:px-8">
           <div className="flex items-center gap-4">
-            <button 
-              onClick={toggleSidebar} 
+            <button
+              onClick={toggleSidebar}
               className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition-colors"
             >
               <Menu size={24} />
             </button>
             <div className="md:hidden flex items-center gap-2">
-               <Disc className="text-pnr-purple" size={24} />
-               <span className="font-display font-bold text-slate-900 dark:text-white">MyPNR</span>
+              <Disc className="text-pnr-purple" size={24} />
+              <span className="font-display font-bold text-slate-900 dark:text-white">MyPNR</span>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-3">
-            <button 
-                onClick={toggleFullScreen}
-                className="p-2.5 rounded-xl text-slate-400 hover:text-pnr-purple hover:bg-slate-100 dark:hover:bg-slate-800 transition-all hidden sm:block"
-                title={isFullscreen ? "Tam Ekrandan Çık" : "Tam Ekran Yap"}
+            <button
+              onClick={toggleFullScreen}
+              className="p-2.5 rounded-xl text-slate-400 hover:text-pnr-purple hover:bg-slate-100 dark:hover:bg-slate-800 transition-all hidden sm:block"
+              title={isFullscreen ? "Tam Ekrandan Çık" : "Tam Ekran Yap"}
             >
               {isFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
             </button>
@@ -288,13 +288,13 @@ const App: React.FC = () => {
         {/* Main Content Area */}
         <main className="min-h-[calc(100-5rem)]">
           {isLoadingPermissions ? (
-             <div className="flex items-center justify-center h-[50vh]">
-                <div className="w-10 h-10 border-4 border-pnr-purple/30 border-t-pnr-purple rounded-full animate-spin"></div>
-             </div>
+            <div className="flex items-center justify-center h-[50vh]">
+              <div className="w-10 h-10 border-4 border-pnr-purple/30 border-t-pnr-purple rounded-full animate-spin"></div>
+            </div>
           ) : (
-             <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                {renderPage()}
-             </div>
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+              {renderPage()}
+            </div>
           )}
         </main>
       </div>
