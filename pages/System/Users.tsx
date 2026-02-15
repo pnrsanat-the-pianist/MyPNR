@@ -81,15 +81,43 @@ const Users: React.FC = () => {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUser.name || !newUser.email || !newUser.password) return;
+    if (!newUser.name || !newUser.email || !newUser.password) {
+      alert("Lütfen tüm zorunlu alanları doldurun.");
+      return;
+    }
 
-    // Not: Client-side 'signUp' işlemi mevcut admin oturumunu kapatabilir.
-    // Bu yüzden burada sadece basit bir uyarı veya backend function gerekliliği vardır.
-    // Demo amaçlı sadece profiles tablosuna eklemeyi deniyoruz (Auth trigger yoksa).
-    // Ancak auth trigger varsa, önce Auth kaydı gerekir.
-    
-    alert("Not: Yeni kullanıcı ekleme işlemi için Admin API veya Backend Function gereklidir. Bu demo sürümünde sadece listedeki veriler yönetilebilir.");
-    setIsModalOpen(false);
+    try {
+      const { data, error } = await supabase.functions.invoke('manage-users', {
+        body: {
+          action: 'create',
+          email: newUser.email,
+          password: newUser.password,
+          name: newUser.name,
+          role: newUser.role
+        }
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      alert(`${newUser.name} başarıyla oluşturuldu!`);
+      setIsModalOpen(false);
+      
+      // Listeyi yenile
+      fetchUsers();
+      
+      // Formu temizle
+      setNewUser({
+        name: '',
+        email: '',
+        password: '',
+        role: UserRole.OGRETMEN
+      });
+
+    } catch (err: any) {
+      console.error("Kullanıcı oluşturma hatası:", err);
+      alert(`Hata: ${err.message || "Bilinmeyen bir hata oluştu."}`);
+    }
   };
 
   const toggleStatus = async (id: string, currentStatus: string) => {
@@ -116,17 +144,24 @@ const Users: React.FC = () => {
   const handleDeleteUser = async (id: string) => {
     if (window.confirm('Bu kullanıcıyı silmek istediğinize emin misiniz? Bu işlem geri alınamaz.')) {
       try {
-        const { error } = await supabase
-          .from('profiles')
-          .delete()
-          .eq('id', id);
+        // Optimize: Önce UI'dan kaldır
+        const previousUsers = [...users];
+        setUsers(users.filter(u => u.id !== id));
+
+        const { data, error } = await supabase.functions.invoke('manage-users', {
+            body: {
+                action: 'delete',
+                userId: id
+            }
+        });
 
         if (error) throw error;
-        
-        setUsers(users.filter(u => u.id !== id));
+        if (data?.error) throw new Error(data.error);
+
       } catch (error: any) {
         console.error('Delete failed:', error);
-        alert('Silme işlemi başarısız oldu. Yetkinizi kontrol edin.');
+        alert(`Silme işlemi başarısız oldu: ${error.message}`);
+        fetchUsers(); // Rollback / Refresh
       }
     }
   };
