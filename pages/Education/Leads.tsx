@@ -3,7 +3,8 @@ import {
   UserPlus, Search, Filter, ChevronDown, ChevronRight,
   MessageSquare, Phone, Calendar, User, Send, X, Check,
   Globe, ArrowUpDown, ArrowUp, ArrowDown, Edit, RefreshCcw, Trash2,
-  Instagram, Mail, MessageCircle, HelpCircle
+  Instagram, Mail, MessageCircle, HelpCircle,
+  Baby, UserCheck, Building2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { UserRole } from '../../types';
@@ -101,8 +102,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
           notes: item.notes || [], // JSONB column to array
           createdAt: new Date(item.created_at).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' }),
           rawDate: new Date(item.created_at).getTime(),
-          type: item.student_name?.includes('[Öğretmen]') ? 'Öğretmen' :
-            item.student_name?.includes('[Kurum]') ? 'Kurum' : 'Öğrenci'
+          type: item.type as LeadType || 'Öğrenci'
         }));
         setLeads(mappedLeads);
       }
@@ -148,9 +148,21 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
     ));
 
     try {
-      await supabase.from('new_leads').update({ status: newStatus }).eq('id', id);
-    } catch (err) {
+      const { data, error } = await supabase
+        .from('new_leads')
+        .update({ status: newStatus })
+        .eq('id', id)
+        .select();
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        alert('Hata: Güncelleme işlemi sunucu tarafından reddedildi (RLS Politikası). Lütfen aşağıdaki SQL komutunu Supabase panelinde çalıştırın.');
+        console.error('Update succeeded but no rows returned. Likely RLS issue.');
+      }
+    } catch (err: any) {
       console.error('Status Update Error:', err);
+      alert(`Hata: ${err.message || 'Bilinmeyen bir hata oluştu'}`);
       fetchData(); // Revert on error
     }
   };
@@ -191,17 +203,14 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
 
     try {
       // For teachers and institutions, we prefix the name to clarify in the list
-      const displayName = newLead.type === 'Öğrenci'
-        ? newLead.contactName
-        : `[${newLead.type}] ${newLead.contactName}`;
-
       const commonData = {
-        student_name: displayName,
+        student_name: newLead.contactName,
         age: parseInt(newLead.age) || 0,
         branch: newLead.branch,
-        parent_name: newLead.contactName, // Store in parent_name as the contact person
+        parent_name: newLead.contactName,
         phone: newLead.phone,
         source: newLead.source,
+        type: newLead.type
       };
 
       if (editingLeadId) {
@@ -336,14 +345,24 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
     setSortConfig({ key, direction });
   };
 
-  // Helper for Status Colors
-  const getStatusColor = (status: LeadStatus) => {
+  // Helper for Status Colors (Row Backgrounds)
+  const getRowStatusColor = (status: LeadStatus) => {
+    switch (status) {
+      case 'Görüşüldü': return 'bg-red-50/80 dark:bg-red-950/20';
+      case 'Deneme': return 'bg-blue-50/80 dark:bg-blue-950/20';
+      case 'Kayıt': return 'bg-green-100/90 dark:bg-green-900/30';
+      case 'İptal': return 'bg-slate-50/50 dark:bg-slate-900/10 opacity-60';
+      default: return '';
+    }
+  };
+
+  const getStatusBadgeColor = (status: LeadStatus) => {
     switch (status) {
       case 'Takip': return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800';
-      case 'Görüşüldü': return 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800';
+      case 'Görüşüldü': return 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800';
       case 'Deneme': return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800';
       case 'Kayıt': return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800';
-      case 'İptal': return 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800';
+      case 'İptal': return 'bg-slate-100 text-slate-800 border-slate-200 dark:bg-slate-900/30 dark:text-slate-500 dark:border-slate-800';
       default: return 'bg-slate-100 text-slate-800';
     }
   };
@@ -498,7 +517,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
           <table className="w-full text-left border-collapse min-w-[800px]">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-                <th className="p-4 w-12 text-center text-[10px] font-semibold text-slate-500 uppercase">Sil</th>
+                <th className="p-4 w-10 text-center text-[10px] font-semibold text-slate-500 uppercase">Sil</th>
                 <th className="p-4 w-10 text-center text-[10px] font-semibold text-slate-500 uppercase tracking-tighter">İşlem</th>
                 <th className="p-4 w-28 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('createdAt')}>
                   <div className="flex items-center">Tarih <SortIcon columnKey="createdAt" /></div>
@@ -509,29 +528,29 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                 <th className="p-4 w-32 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('branch')}>
                   <div className="flex items-center">Branş <SortIcon columnKey="branch" /></div>
                 </th>
-                <th className="p-4 w-40 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('source')}>
+                <th className="p-4 w-32 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('source')}>
                   <div className="flex items-center">Kaynak <SortIcon columnKey="source" /></div>
                 </th>
-                <th className="p-4 w-48 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase">İlk Not</th>
-                <th className="p-4 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('parentName')}>
-                  <div className="flex items-center">İletişim <SortIcon columnKey="parentName" /></div>
+                <th className="p-4 w-80 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase">İlk Not</th>
+                <th className="p-4 w-40 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('parentName')}>
+                  <div className="flex items-center uppercase">İLETİŞİM <SortIcon columnKey="parentName" /></div>
                 </th>
                 <th className="p-4 w-32 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('status')}>
                   <div className="flex items-center">Durum <SortIcon columnKey="status" /></div>
                 </th>
-                <th className="p-4 w-12 text-center text-[10px] font-semibold text-slate-500 uppercase">Düzen</th>
+                <th className="p-4 w-10 text-center text-[10px] font-semibold text-slate-500 uppercase tracking-tighter">Düzen</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {loading ? (
-                <tr><td colSpan={8} className="p-8 text-center text-slate-500">Yükleniyor...</td></tr>
+                <tr><td colSpan={10} className="p-8 text-center text-slate-500">Yükleniyor...</td></tr>
               ) : filteredLeads.length > 0 ? (
                 filteredLeads.map((lead) => (
                   <React.Fragment key={lead.id}>
                     {/* Main Row */}
                     <tr
                       onClick={() => toggleRow(lead.id)}
-                      className={`group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer ${expandedRows.includes(lead.id) ? 'bg-slate-50 dark:bg-slate-800/30' : ''}`}
+                      className={`group hover:brightness-95 dark:hover:brightness-110 transition-all cursor-pointer ${getRowStatusColor(lead.status)} ${expandedRows.includes(lead.id) ? 'brightness-95 dark:brightness-110' : ''}`}
                     >
                       <td className="p-4 text-center">
                         <button
@@ -551,18 +570,27 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                         <div className="flex flex-col">
                           {lead.type === 'Öğrenci' ? (
                             <>
-                              <span className="text-blue-600 dark:text-blue-400 font-bold text-sm tracking-tight">Öğrenci</span>
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Yaşı: {lead.age}</span>
+                              <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                                <Baby size={16} />
+                                <span className="font-bold text-xs tracking-tight">Öğrenci</span>
+                              </div>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 ml-5">Yaşı: {lead.age}</span>
                             </>
                           ) : lead.type === 'Öğretmen' ? (
-                            <span className="text-red-600 dark:text-red-400 font-bold text-sm tracking-tight">Öğretmen</span>
+                            <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                              <UserCheck size={16} />
+                              <span className="font-bold text-xs tracking-tight">Öğretmen</span>
+                            </div>
                           ) : (
-                            <span className="text-orange-600 dark:text-orange-400 font-bold text-sm tracking-tight">Kurum</span>
+                            <div className="flex items-center gap-1.5 text-orange-600 dark:text-orange-400">
+                              <Building2 size={16} />
+                              <span className="font-bold text-xs tracking-tight">Kurum</span>
+                            </div>
                           )}
                         </div>
                       </td>
                       <td className="p-4">
-                        <span className={`text-xs font-bold leading-none ${getBranchStyle(lead.branch)}`}>
+                        <span className={`text-sm font-bold leading-none ${getBranchStyle(lead.branch)}`}>
                           {lead.branch}
                         </span>
                       </td>
@@ -572,12 +600,12 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                           {lead.source}
                         </span>
                       </td>
-                      <td className="p-4 max-w-[200px]">
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2 italic leading-tight">
+                      <td className="p-4 w-80">
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-3 italic leading-tight">
                           {lead.notes.length > 0 ? lead.notes[0].content : '-'}
                         </p>
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 w-60">
                         <div className="flex flex-col">
                           <span className="text-sm font-bold text-slate-900 dark:text-white">{lead.parentName}</span>
                           <div className="flex items-center gap-1 text-sm text-slate-600 dark:text-slate-300 mt-0.5 font-mono font-medium">
@@ -590,7 +618,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                         <select
                           value={lead.status}
                           onChange={(e) => handleStatusChange(lead.id, e.target.value as LeadStatus)}
-                          className={`text-xs font-bold px-3 py-1.5 rounded-lg border appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-pnr-purple transition-colors ${getStatusColor(lead.status)}`}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-lg border appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-pnr-purple transition-colors ${getStatusBadgeColor(lead.status)}`}
                         >
                           <option value="Takip" className="bg-white text-slate-900 dark:bg-slate-800 dark:text-white">Takip</option>
                           <option value="Görüşüldü" className="bg-white text-slate-900 dark:bg-slate-800 dark:text-white text-orange-600">Görüşüldü</option>
