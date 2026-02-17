@@ -17,14 +17,59 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLogout, currentPath, toggleTheme, isDarkMode, permissions }) => {
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
+  const [syncedPath, setSyncedPath] = useState<string>('');
 
-  const toggleMenu = (id: string) => {
-    if (!isOpen && window.innerWidth >= 768) {
-        toggleSidebar();
+  // Auto-expand based on active path
+  React.useEffect(() => {
+    // Only run if path changed
+    const cleanPath = currentPath.split('?')[0];
+    if (cleanPath === syncedPath) return;
+
+    const findPathToItem = (items: NavItem[], targetPath: string, parentIds: string[] = []): string[] | null => {
+      for (const item of items) {
+        // Check direct match
+        if (item.path === targetPath) {
+          return parentIds;
+        }
+        // Check children
+        if (item.subItems) {
+          const found = findPathToItem(item.subItems, targetPath, [...parentIds, item.id]);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const expandedIds = findPathToItem(MENU_ITEMS, cleanPath);
+    if (expandedIds) {
+      setExpandedMenus(expandedIds);
+      setSyncedPath(cleanPath);
     }
-    setExpandedMenus(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
+  }, [currentPath, syncedPath]);
+
+  const toggleMenu = (id: string, level: number) => {
+    if (!isOpen && window.innerWidth >= 768) {
+      toggleSidebar();
+    }
+
+    if (level === 0) {
+      // Main Header Logic: Exclusive Accordion
+      setExpandedMenus(prev => {
+        const isAlreadyOpen = prev.includes(id);
+        if (isAlreadyOpen) {
+          // If closing the main item, close everything
+          return [];
+        } else {
+          // If opening, close other main items (by resetting list to just this one)
+          return [id];
+        }
+      });
+    } else {
+      // Sub-menu Logic: Standard Toggle (can allow multiple sub-sections or not, usually standard toggle is fine inside a section)
+      setExpandedMenus(prev =>
+        prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+      );
+    }
   };
 
   const isActive = (path?: string) => {
@@ -39,7 +84,7 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
 
     // 2. Check dynamic permissions (if resource exists in DB map)
     if (permissions[item.id] !== undefined) {
-        return permissions[item.id].view;
+      return permissions[item.id].view;
     }
 
     // 3. Fallback to hardcoded roles (legacy support during transition)
@@ -47,8 +92,8 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
     // OR we could default to false. For safety in this hybrid state, we use hardcoded.
     // However, if the permissions object IS populated (meaning we fetched from DB), 
     // and the item is NOT in it, it implies no access (default allow for Dashboard usually).
-    if (item.id === 'dashboard') return true; 
-    
+    if (item.id === 'dashboard') return true;
+
     // If permissions are loaded but item not found -> hidden (Secure by default)
     if (Object.keys(permissions).length > 0) return false;
 
@@ -62,7 +107,7 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
     if (!path) return;
     window.location.hash = path;
     if (window.innerWidth < 768) {
-        toggleSidebar();
+      toggleSidebar();
     }
   };
 
@@ -72,20 +117,20 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
 
     const hasSubItems = item.subItems && item.subItems.some(sub => hasPermission(sub)); // Only show parent if at least one child is visible
     // Update: hasSubItems check above ensures empty parents are hidden
-    
+
     const Icon = item.icon || Disc;
     const showTitle = isOpen || window.innerWidth < 768;
     const active = isActive(item.path);
     const isExpanded = expandedMenus.includes(item.id);
-    
+
     // Indentation based on level
     const paddingLeft = level === 0 ? 'px-3' : level === 1 ? 'pl-4 pr-3' : 'pl-8 pr-3';
-    
+
     if (hasSubItems) {
       return (
         <div key={item.id} className="mb-1">
           <button
-            onClick={() => toggleMenu(item.id)}
+            onClick={() => toggleMenu(item.id, level)}
             className={`
               w-full flex items-center justify-between ${paddingLeft} py-3 rounded-xl transition-all duration-200 group
               ${isExpanded && showTitle && level === 0 ? 'bg-slate-50 dark:bg-slate-800/50 text-pnr-purple dark:text-pnr-cyan' : ''}
@@ -121,13 +166,13 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
           onClick={(e) => handleNavigation(e, item.path)}
           className={`
             flex items-center gap-3 ${paddingLeft} py-3 rounded-xl transition-all duration-200 group mb-1
-            ${active 
-              ? 'bg-gradient-to-r from-pnr-purple to-pnr-indigo text-white shadow-lg shadow-pnr-purple/20' 
+            ${active
+              ? 'bg-gradient-to-r from-pnr-purple to-pnr-indigo text-white shadow-lg shadow-pnr-purple/20'
               : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'}
           `}
         >
           {level === 0 && <Icon size={22} className="shrink-0" />}
-          
+
           {showTitle && (
             <span className={`
               whitespace-nowrap
@@ -143,7 +188,7 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
   };
 
   return (
-    <div 
+    <div
       className={`
         fixed inset-y-0 left-0 z-[70] 
         flex flex-col 
@@ -168,10 +213,10 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
             </div>
           )}
         </div>
-        
+
         {/* Mobile Close Button */}
-        <button 
-          onClick={toggleSidebar} 
+        <button
+          onClick={toggleSidebar}
           className="absolute right-4 md:hidden p-2 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         >
           <X size={24} />
@@ -186,18 +231,18 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
       {/* Footer */}
       <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-4 shrink-0 bg-slate-50/50 dark:bg-transparent">
         <div className="grid grid-cols-2 gap-2">
-          <button 
+          <button
             onClick={toggleTheme}
             className="flex items-center justify-center p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 transition-colors shadow-sm"
           >
             {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
           </button>
-          <button 
+          <button
             onClick={onLogout}
             className="flex items-center justify-center p-3 rounded-xl bg-red-50 dark:bg-red-900/10 text-red-500 border border-red-100 dark:border-red-900/20 hover:bg-red-100 transition-colors shadow-sm"
           >
             <div className="flex gap-2 items-center">
-                <span className="text-xs font-bold md:hidden lg:inline">Çıkış</span>
+              <span className="text-xs font-bold md:hidden lg:inline">Çıkış</span>
             </div>
           </button>
         </div>
