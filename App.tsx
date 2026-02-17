@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Menu, Disc, Bell, ShieldAlert, Maximize, Minimize } from 'lucide-react';
+import { Menu, Disc, ShieldAlert, Maximize, Minimize } from 'lucide-react';
 import Sidebar from './components/Layout/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
@@ -58,6 +58,29 @@ const App: React.FC = () => {
     }
   }, [isDarkMode]);
 
+  // Handle session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setIsLoggedIn(true);
+        // Fetch profile
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role, name')
+          .eq('id', session.user.id)
+          .single();
+
+        if (profile) {
+          setUserRole(profile.role as UserRole);
+          setUserName(profile.name || session.user.user_metadata?.name || session.user.email || '');
+          fetchPermissions(profile.role as UserRole);
+        }
+      }
+    };
+    checkSession();
+  }, []);
+
   // Handle fullscreen change events (e.g. user presses Esc)
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -98,10 +121,25 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogin = (role: UserRole) => {
+  const [userName, setUserName] = useState<string>('');
+
+  const handleLogin = async (role: UserRole) => {
     setUserRole(role);
     fetchPermissions(role);
     setIsLoggedIn(true);
+
+    // Fetch User Name
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data } = await supabase.from('profiles').select('name').eq('id', user.id).single();
+      if (data && data.name) {
+        setUserName(data.name);
+      } else if (user.user_metadata?.name) {
+        setUserName(user.user_metadata.name);
+      } else {
+        setUserName(user.email || '');
+      }
+    }
   };
 
   const handleLogout = () => {
@@ -166,7 +204,7 @@ const App: React.FC = () => {
     switch (pathBase) {
       // Dashboard is usually open, but checked against 'dashboard' key
       case '/':
-        return renderProtectedPage('dashboard', () => <Dashboard />);
+        return renderProtectedPage('dashboard', () => <Dashboard currentUserRole={userRole} />);
 
       // Management
       case '/management/branches':
@@ -218,7 +256,7 @@ const App: React.FC = () => {
         return renderProtectedPage('ayarlar', (canEdit) => <Settings />);
 
       default:
-        return <Dashboard />;
+        return <Dashboard currentUserRole={userRole} />;
     }
   };
 
@@ -237,6 +275,7 @@ const App: React.FC = () => {
         toggleTheme={toggleTheme}
         isDarkMode={isDarkMode}
         permissions={permissions} // Pass dynamic permissions
+        userName={userName}
       />
 
       {/* Mobile Backdrop */}
@@ -272,16 +311,6 @@ const App: React.FC = () => {
             >
               {isFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
             </button>
-
-            <button className="p-2.5 rounded-xl text-slate-400 hover:text-pnr-purple hover:bg-slate-100 dark:hover:bg-slate-800 relative transition-all">
-              <Bell size={22} />
-              <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 bg-pnr-red border-2 border-white dark:border-pnr-dark rounded-full"></span>
-            </button>
-            <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden cursor-pointer hover:ring-2 hover:ring-pnr-purple transition-all hidden sm:block">
-              <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">
-                {userRole.charAt(0)}
-              </div>
-            </div>
           </div>
         </header>
 

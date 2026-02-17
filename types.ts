@@ -42,6 +42,13 @@ export interface BranchStat {
   color: string;
 }
 
+export interface TeacherStat {
+  id: string;
+  name: string;
+  studentCount: number;
+  totalHours?: number;
+}
+
 // UI View Model for Dashboard
 export interface Student {
   id: string;

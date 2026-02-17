@@ -6,16 +6,17 @@ import { NavItem, UserRole } from '../../types';
 
 interface SidebarProps {
   userRole: UserRole;
+  userName?: string; // New Prop
   isOpen: boolean;
   toggleSidebar: () => void;
   onLogout: () => void;
   currentPath: string;
   toggleTheme: () => void;
   isDarkMode: boolean;
-  permissions: Record<string, { view: boolean; edit: boolean }>; // New Prop
+  permissions: Record<string, { view: boolean; edit: boolean }>;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLogout, currentPath, toggleTheme, isDarkMode, permissions }) => {
+const Sidebar: React.FC<SidebarProps> = ({ userRole, userName, isOpen, toggleSidebar, onLogout, currentPath, toggleTheme, isDarkMode, permissions }) => {
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   const [syncedPath, setSyncedPath] = useState<string>('');
 
@@ -250,11 +251,11 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, isOpen, toggleSidebar, onLo
         {(isOpen || window.innerWidth < 768) && (
           <div className="flex items-center gap-3 p-1">
             <div className="w-10 h-10 rounded-full bg-pnr-purple text-white flex items-center justify-center font-bold shrink-0 shadow-inner">
-              {userRole.charAt(0)}
+              {userName ? userName.charAt(0) : userRole.charAt(0)}
             </div>
             <div className="flex flex-col min-w-0">
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-200 truncate">Kullanıcı</span>
-              <span className="text-[10px] text-slate-500 uppercase tracking-tighter">{userRole}</span>
+              <span className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{userName}</span>
+              <span className="text-xs font-bold text-pnr-purple dark:text-pnr-cyan uppercase tracking-wide">{userRole}</span>
             </div>
           </div>
         )}
