@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  UserPlus, Search, Shield, Mail, Lock, X, Check, 
+import {
+  UserPlus, Search, Shield, Mail, Lock, X, Check,
   Trash2, User as UserIcon, CheckCircle2, Clock,
   ArrowUpDown, ArrowUp, ArrowDown, RefreshCcw
 } from 'lucide-react';
@@ -37,7 +37,7 @@ const Users: React.FC = () => {
     name: '',
     email: '',
     password: '',
-    role: UserRole.OGRETMEN
+    role: UserRole.ADMIN
   });
 
   // --- Data Fetching ---
@@ -102,16 +102,16 @@ const Users: React.FC = () => {
 
       alert(`${newUser.name} başarıyla oluşturuldu!`);
       setIsModalOpen(false);
-      
+
       // Listeyi yenile
       fetchUsers();
-      
+
       // Formu temizle
       setNewUser({
         name: '',
         email: '',
         password: '',
-        role: UserRole.OGRETMEN
+        role: UserRole.ADMIN
       });
 
     } catch (err: any) {
@@ -122,7 +122,7 @@ const Users: React.FC = () => {
 
   const toggleStatus = async (id: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'passive' : 'active';
-    
+
     // Optimistic Update
     setUsers(users.map(u => u.id === id ? { ...u, status: newStatus } : u));
 
@@ -149,10 +149,10 @@ const Users: React.FC = () => {
         setUsers(users.filter(u => u.id !== id));
 
         const { data, error } = await supabase.functions.invoke('manage-users', {
-            body: {
-                action: 'delete',
-                userId: id
-            }
+          body: {
+            action: 'delete',
+            userId: id
+          }
         });
 
         if (error) throw error;
@@ -222,14 +222,14 @@ const Users: React.FC = () => {
   // Helper Component for Sort Icon
   const SortIcon = ({ columnKey }: { columnKey: SortKey }) => {
     if (sortConfig?.key !== columnKey) return <ArrowUpDown size={14} className="ml-1 opacity-40 group-hover:opacity-100" />;
-    return sortConfig.direction === 'asc' 
-      ? <ArrowUp size={14} className="ml-1 text-pnr-purple" /> 
+    return sortConfig.direction === 'asc'
+      ? <ArrowUp size={14} className="ml-1 text-pnr-purple" />
       : <ArrowDown size={14} className="ml-1 text-pnr-purple" />;
   };
 
   return (
     <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6">
-      
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -239,9 +239,9 @@ const Users: React.FC = () => {
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1 sm:flex-none">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={18} />
-            <input 
-              type="text" 
-              placeholder="Kullanıcı ara..." 
+            <input
+              type="text"
+              placeholder="Kullanıcı ara..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full sm:w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white pl-10 pr-4 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-pnr-purple placeholder:text-slate-400 dark:placeholder:text-slate-500 h-[42px]"
@@ -249,40 +249,38 @@ const Users: React.FC = () => {
           </div>
 
           <div className="flex gap-4">
-               {/* Refresh Button */}
-               <button 
-                onClick={fetchUsers}
-                disabled={loading}
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                title="Listeyi Yenile"
-               >
-                 <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
-               </button>
+            {/* Refresh Button */}
+            <button
+              onClick={fetchUsers}
+              disabled={loading}
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+              title="Listeyi Yenile"
+            >
+              <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
+            </button>
 
-              {/* Passive Toggle Switch */}
-              <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 h-[42px] flex-1 sm:flex-none justify-between sm:justify-start">
-                <span className="text-xs font-medium text-slate-600 dark:text-slate-300">Pasifler</span>
-                <button 
-                    onClick={() => setShowPassive(!showPassive)}
-                    className={`relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none ${
-                        showPassive ? 'bg-pnr-purple' : 'bg-slate-300 dark:bg-slate-600'
-                    }`}
-                >
-                    <span 
-                        className={`inline-block w-3.5 h-3.5 transform bg-white rounded-full transition-transform duration-200 ml-1 mt-0.5 shadow-sm ${
-                            showPassive ? 'translate-x-3.5' : 'translate-x-0'
-                        }`}
-                    />
-                </button>
-              </div>
-
-              <button 
-                onClick={() => setIsModalOpen(true)}
-                className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px] flex-1 sm:flex-none"
+            {/* Passive Toggle Switch */}
+            <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 h-[42px] flex-1 sm:flex-none justify-between sm:justify-start">
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-300">Pasifler</span>
+              <button
+                onClick={() => setShowPassive(!showPassive)}
+                className={`relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none ${showPassive ? 'bg-pnr-purple' : 'bg-slate-300 dark:bg-slate-600'
+                  }`}
               >
-                <UserPlus size={18} />
-                <span className="whitespace-nowrap">Yeni Kullanıcı</span>
+                <span
+                  className={`inline-block w-3.5 h-3.5 transform bg-white rounded-full transition-transform duration-200 ml-1 mt-0.5 shadow-sm ${showPassive ? 'translate-x-3.5' : 'translate-x-0'
+                    }`}
+                />
               </button>
+            </div>
+
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px] flex-1 sm:flex-none"
+            >
+              <UserPlus size={18} />
+              <span className="whitespace-nowrap">Yeni Kullanıcı</span>
+            </button>
           </div>
         </div>
       </div>
@@ -290,51 +288,51 @@ const Users: React.FC = () => {
       {/* Users Table */}
       <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
         {loading ? (
-           <div className="p-8 text-center text-slate-500 dark:text-slate-400">
-             Yükleniyor...
-           </div>
+          <div className="p-8 text-center text-slate-500 dark:text-slate-400">
+            Yükleniyor...
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[800px]">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                   <th className="p-4 w-16 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">#</th>
-                  
-                  <th 
+
+                  <th
                     className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group select-none"
                     onClick={() => handleSort('name')}
                   >
                     <div className="flex items-center gap-1">Kullanıcı <SortIcon columnKey="name" /></div>
                   </th>
-                  
-                  <th 
+
+                  <th
                     className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group select-none"
                     onClick={() => handleSort('email')}
                   >
                     <div className="flex items-center gap-1">E-Posta <SortIcon columnKey="email" /></div>
                   </th>
-                  
-                  <th 
+
+                  <th
                     className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group select-none"
                     onClick={() => handleSort('role')}
                   >
                     <div className="flex items-center gap-1">Yetki / Rol <SortIcon columnKey="role" /></div>
                   </th>
-                  
-                  <th 
+
+                  <th
                     className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group select-none"
                     onClick={() => handleSort('isVerified')}
                   >
                     <div className="flex items-center justify-center gap-1">Onay Durumu <SortIcon columnKey="isVerified" /></div>
                   </th>
-                  
-                  <th 
+
+                  <th
                     className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group select-none"
                     onClick={() => handleSort('status')}
                   >
                     <div className="flex items-center justify-center gap-1">Durum <SortIcon columnKey="status" /></div>
                   </th>
-                  
+
                   <th className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase w-10"></th>
                 </tr>
               </thead>
@@ -361,42 +359,40 @@ const Users: React.FC = () => {
                       </td>
                       <td className="p-4 text-center">
                         {user.isVerified ? (
-                            <div className="inline-flex items-center gap-1.5 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-3 py-1 rounded-full text-xs font-medium border border-green-100 dark:border-green-800">
-                                <CheckCircle2 size={14} /> Doğrulandı
-                            </div>
+                          <div className="inline-flex items-center gap-1.5 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-3 py-1 rounded-full text-xs font-medium border border-green-100 dark:border-green-800">
+                            <CheckCircle2 size={14} /> Doğrulandı
+                          </div>
                         ) : (
-                            <div className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-1 rounded-full text-xs font-medium border border-amber-100 dark:border-amber-800">
-                                <Clock size={14} /> Bekliyor
-                            </div>
+                          <div className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-1 rounded-full text-xs font-medium border border-amber-100 dark:border-amber-800">
+                            <Clock size={14} /> Bekliyor
+                          </div>
                         )}
                       </td>
                       <td className="p-4 text-center">
                         <div className="flex flex-col items-center justify-center gap-1">
-                            <button
-                                type="button"
-                                onClick={() => toggleStatus(user.id, user.status)}
-                                className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-pnr-purple ${
-                                    user.status === 'passive' ? 'bg-slate-300 dark:bg-slate-600' : 'bg-pnr-green'
+                          <button
+                            type="button"
+                            onClick={() => toggleStatus(user.id, user.status)}
+                            className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-pnr-purple ${user.status === 'passive' ? 'bg-slate-300 dark:bg-slate-600' : 'bg-pnr-green'
+                              }`}
+                          >
+                            <span
+                              className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform duration-200 shadow-sm ${user.status === 'passive' ? 'translate-x-1' : 'translate-x-6'
                                 }`}
-                            >
-                                <span
-                                    className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform duration-200 shadow-sm ${
-                                        user.status === 'passive' ? 'translate-x-1' : 'translate-x-6'
-                                    }`}
-                                />
-                            </button>
-                            <span className="text-[10px] uppercase font-bold text-slate-400">
-                                {user.status === 'active' ? 'Aktif' : 'Pasif'}
-                            </span>
+                            />
+                          </button>
+                          <span className="text-[10px] uppercase font-bold text-slate-400">
+                            {user.status === 'active' ? 'Aktif' : 'Pasif'}
+                          </span>
                         </div>
                       </td>
                       <td className="p-4 text-center">
-                        <button 
+                        <button
                           onClick={() => handleDeleteUser(user.id)}
                           className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
                           title="Kullanıcıyı Sil"
                         >
-                            <Trash2 size={18} />
+                          <Trash2 size={18} />
                         </button>
                       </td>
                     </tr>
@@ -418,7 +414,7 @@ const Users: React.FC = () => {
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white dark:bg-pnr-card w-full max-w-md rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95 duration-200">
-            
+
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
               <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Shield size={20} className="text-pnr-purple" />
@@ -430,70 +426,70 @@ const Users: React.FC = () => {
             </div>
 
             <form onSubmit={handleAddUser} className="p-6 space-y-4">
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Ad Soyad *</label>
-                    <div className="relative">
-                        <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input 
-                            type="text" required
-                            value={newUser.name}
-                            onChange={(e) => setNewUser({...newUser, name: e.target.value})}
-                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                            placeholder="Örn: Ahmet Yılmaz"
-                        />
-                    </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Ad Soyad *</label>
+                <div className="relative">
+                  <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text" required
+                    value={newUser.name}
+                    onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                    placeholder="Örn: Ahmet Yılmaz"
+                  />
                 </div>
+              </div>
 
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">E-Posta *</label>
-                    <div className="relative">
-                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input 
-                            type="email" required
-                            value={newUser.email}
-                            onChange={(e) => setNewUser({...newUser, email: e.target.value})}
-                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                            placeholder="ornek@pnrsanat.com"
-                        />
-                    </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">E-Posta *</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="email" required
+                    value={newUser.email}
+                    onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                    placeholder="ornek@pnrsanat.com"
+                  />
                 </div>
+              </div>
 
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Geçici Şifre *</label>
-                    <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input 
-                            type="text" required
-                            value={newUser.password}
-                            onChange={(e) => setNewUser({...newUser, password: e.target.value})}
-                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                            placeholder="Şifre belirleyiniz"
-                        />
-                    </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Geçici Şifre *</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text" required
+                    value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                    placeholder="Şifre belirleyiniz"
+                  />
                 </div>
+              </div>
 
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Kullanıcı Tipi (Rol)</label>
-                    <select 
-                        value={newUser.role}
-                        onChange={(e) => setNewUser({...newUser, role: e.target.value as UserRole})}
-                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none cursor-pointer"
-                    >
-                        {Object.values(UserRole).map(role => (
-                            <option key={role} value={role}>{role}</option>
-                        ))}
-                    </select>
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Kullanıcı Tipi (Rol)</label>
+                <select
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value as UserRole })}
+                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none cursor-pointer"
+                >
+                  {Object.values(UserRole).map(role => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </select>
+              </div>
 
-                <div className="flex justify-end pt-4">
-                    <button 
-                        type="submit"
-                        className="bg-pnr-purple hover:bg-pnr-indigo text-white px-6 py-2.5 rounded-xl font-bold transition-colors shadow-lg shadow-pnr-purple/20 flex items-center gap-2"
-                    >
-                        <Check size={18} />
-                        Kaydet ve Davet Et
-                    </button>
-                </div>
+              <div className="flex justify-end pt-4">
+                <button
+                  type="submit"
+                  className="bg-pnr-purple hover:bg-pnr-indigo text-white px-6 py-2.5 rounded-xl font-bold transition-colors shadow-lg shadow-pnr-purple/20 flex items-center gap-2"
+                >
+                  <Check size={18} />
+                  Kaydet ve Davet Et
+                </button>
+              </div>
             </form>
           </div>
         </div>

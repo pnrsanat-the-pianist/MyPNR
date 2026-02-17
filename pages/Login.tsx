@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { 
-  Disc, ArrowRight, AlertCircle, LogIn, UserPlus, 
-  Shield, Briefcase, GraduationCap, Users, User, Glasses 
+import {
+  Disc, ArrowRight, AlertCircle, LogIn, UserPlus,
+  Shield, Briefcase, GraduationCap, Users, User, Glasses
 } from 'lucide-react';
 import { UserRole } from '../types';
 import { supabase } from '../lib/supabaseClient';
@@ -21,9 +21,9 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
   // --- CENTRALIZED AUTH LOGIC ---
   const handleAuthProcess = async (
-    targetEmail: string, 
-    targetPassword: string, 
-    isSignUpMode: boolean, 
+    targetEmail: string,
+    targetPassword: string,
+    isSignUpMode: boolean,
     targetName?: string
   ) => {
     setError(null);
@@ -64,7 +64,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
         if (signInError) {
           if (signInError.message.includes("Invalid login credentials")) {
-             throw new Error('E-posta veya şifre hatalı. Lütfen bilgilerinizi kontrol edin.');
+            throw new Error('E-posta veya şifre hatalı. Lütfen bilgilerinizi kontrol edin.');
           }
           throw new Error(signInError.message);
         }
@@ -87,42 +87,42 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       // Hata Yönetimi: Veritabanı tablosu yoksa veya erişim hatası varsa
       if (profileError) {
         console.error("Profil Hatası:", profileError);
-        
+
         // RECURSION ERROR CHECK
         if (profileError.message.includes("infinite recursion")) {
-             throw new Error("Veritabanı politika hatası (Infinite Recursion). Lütfen 'docs/fix_rls_recursion.sql' kodunu Supabase SQL Editöründe çalıştırın.");
+          throw new Error("Veritabanı politika hatası (Infinite Recursion). Lütfen 'docs/fix_rls_recursion.sql' kodunu Supabase SQL Editöründe çalıştırın.");
         }
 
         // Eğer profil yoksa (Trigger çalışmadıysa veya tablo yeni oluşturulduysa)
         if (profileError.code === 'PGRST116') { // No rows found
-             console.warn("Kullanıcı auth tablosunda var ama profiles tablosunda yok. Oluşturuluyor...");
-             
-             const { error: insertError } = await supabase
-                .from('profiles')
-                .insert({
-                  id: authUser.id,
-                  email: authUser.email,
-                  name: authUser.user_metadata?.name || targetEmail.split('@')[0],
-                  role: 'Admin', // Default to Admin for self-healing/demo purposes
-                  status: 'active'
-                });
-                
-             if (insertError) {
-                 if (insertError.message.includes('relation "public.profiles" does not exist')) {
-                    throw new Error("Veritabanı tabloları bulunamadı. Lütfen 'setup_database.sql' kodunu Supabase'de çalıştırın.");
-                 }
-                 console.error("Insert Error:", insertError);
-                 throw new Error('Profil oluşturulamadı. Lütfen yönetici ile iletişime geçin.');
-             }
-             
-             // Başarılı kurtarma sonrası giriş
-             onLogin(UserRole.ADMIN);
-             window.location.hash = '/';
-             return;
+          console.warn("Kullanıcı auth tablosunda var ama profiles tablosunda yok. Oluşturuluyor...");
+
+          const { error: insertError } = await supabase
+            .from('profiles')
+            .insert({
+              id: authUser.id,
+              email: authUser.email,
+              name: authUser.user_metadata?.name || targetEmail.split('@')[0],
+              role: 'Admin', // Default to Admin for self-healing/demo purposes
+              status: 'active'
+            });
+
+          if (insertError) {
+            if (insertError.message.includes('relation "public.profiles" does not exist')) {
+              throw new Error("Veritabanı tabloları bulunamadı. Lütfen 'setup_database.sql' kodunu Supabase'de çalıştırın.");
+            }
+            console.error("Insert Error:", insertError);
+            throw new Error('Profil oluşturulamadı. Lütfen yönetici ile iletişime geçin.');
+          }
+
+          // Başarılı kurtarma sonrası giriş
+          onLogin(UserRole.ADMIN);
+          window.location.hash = '/';
+          return;
         }
-        
+
         if (profileError.message.includes('relation "public.profiles" does not exist')) {
-            throw new Error("Veritabanı kurulumu eksik. Lütfen 'setup_database.sql' kodunu Supabase SQL Editöründe çalıştırın.");
+          throw new Error("Veritabanı kurulumu eksik. Lütfen 'setup_database.sql' kodunu Supabase SQL Editöründe çalıştırın.");
         }
 
         throw new Error("Profil bilgileri alınamadı: " + profileError.message);
@@ -159,12 +159,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const handlePinarAdminLogin = () => {
     const adminEmail = 'pinar@pnrsanat.com';
     const adminPass = '22112211';
-    
+
     // UI Feedback
     setEmail(adminEmail);
     setPassword(adminPass);
     setIsSignUp(false);
-    
+
     // Trigger Real Auth
     handleAuthProcess(adminEmail, adminPass, false);
   };
@@ -178,7 +178,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-pnr-dark flex flex-col items-center justify-center p-4 relative overflow-hidden transition-colors duration-300">
-      
+
       {/* Background Decor */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-pnr-purple/5 dark:bg-pnr-purple/10 rounded-full blur-3xl animate-pulse"></div>
@@ -188,9 +188,9 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       <div className="w-full max-w-md bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-8 shadow-2xl relative z-10 animate-in fade-in zoom-in-95 duration-300 my-8">
         <div className="flex flex-col items-center mb-8">
           <div className="relative w-16 h-16 flex items-center justify-center mb-4">
-             <Disc className="w-16 h-16 text-pnr-purple absolute" />
-             <div className="w-10 h-10 rounded-full border-2 border-pnr-yellow absolute"></div>
-             <div className="w-4 h-4 rounded-full bg-pnr-red absolute"></div>
+            <Disc className="w-16 h-16 text-pnr-purple absolute" />
+            <div className="w-10 h-10 rounded-full border-2 border-pnr-yellow absolute"></div>
+            <div className="w-4 h-4 rounded-full bg-pnr-red absolute"></div>
           </div>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight">MyPNR</h1>
           <p className="text-slate-500 dark:text-slate-400">
@@ -216,8 +216,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           {isSignUp && (
             <div className="animate-in slide-in-from-top-2">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Ad Soyad</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -229,8 +229,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">E-Posta</label>
-            <input 
-              type="email" 
+            <input
+              type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -238,11 +238,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               placeholder="ornek@pnrsanat.com"
             />
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Şifre</label>
-            <input 
-              type="password" 
+            <input
+              type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -253,22 +253,22 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           {!isSignUp && (
             <div className="flex items-center justify-between text-sm">
-               <label className="flex items-center gap-2 cursor-pointer">
-                 <input type="checkbox" className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-pnr-purple focus:ring-pnr-purple" />
-                 <span className="text-slate-600 dark:text-slate-400">Beni Hatırla</span>
-               </label>
-               <a href="#" className="text-pnr-cyan hover:underline">Şifremi Unuttum</a>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-pnr-purple focus:ring-pnr-purple" />
+                <span className="text-slate-600 dark:text-slate-400">Beni Hatırla</span>
+              </label>
+              <a href="#" className="text-pnr-cyan hover:underline">Şifremi Unuttum</a>
             </div>
           )}
 
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             disabled={loading}
             className="w-full bg-gradient-to-r from-pnr-purple to-pnr-indigo text-white font-bold py-3.5 rounded-xl hover:opacity-90 transition-all shadow-lg shadow-pnr-purple/25 flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed mt-2"
           >
             {loading ? 'İşlem Yapılıyor...' : (
               <>
-                {isSignUp ? 'Kayıt Ol' : 'Giriş Yap'} 
+                {isSignUp ? 'Kayıt Ol' : 'Giriş Yap'}
                 <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
               </>
             )}
@@ -276,78 +276,22 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         </form>
 
         <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800 text-center">
-            <p className="text-slate-600 dark:text-slate-400 text-sm mb-3">
-                {isSignUp ? 'Zaten bir hesabınız var mı?' : 'Hesabınız yok mu?'}
-            </p>
-            <button 
-                onClick={() => {
-                    setIsSignUp(!isSignUp);
-                    setError(null);
-                    setSuccessMessage(null);
-                }}
-                className="text-pnr-purple hover:text-pnr-indigo font-bold text-sm hover:underline"
-            >
-                {isSignUp ? 'Giriş Yap' : 'Yeni Hesap Oluştur'}
-            </button>
+          <p className="text-slate-600 dark:text-slate-400 text-sm mb-3">
+            {isSignUp ? 'Zaten bir hesabınız var mı?' : 'Hesabınız yok mu?'}
+          </p>
+          <button
+            onClick={() => {
+              setIsSignUp(!isSignUp);
+              setError(null);
+              setSuccessMessage(null);
+            }}
+            className="text-pnr-purple hover:text-pnr-indigo font-bold text-sm hover:underline"
+          >
+            {isSignUp ? 'Giriş Yap' : 'Yeni Hesap Oluştur'}
+          </button>
         </div>
 
-        {/* --- DEMO SHORTCUTS --- */}
-        <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
-           <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center mb-4">
-             Hızlı Giriş
-           </h3>
-           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {/* ADMIN BUTTON - UPDATED TO USE REAL CREDENTIALS */}
-              <button 
-                onClick={handlePinarAdminLogin}
-                className="flex flex-col items-center justify-center p-2 rounded-lg bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors group"
-                title="Pınar Admin Girişi"
-              >
-                <Shield size={20} className="text-red-600 dark:text-red-400 mb-1" />
-                <span className="text-[10px] font-bold text-red-800 dark:text-red-300">Admin</span>
-              </button>
 
-              <button 
-                onClick={() => handleDemoLogin(UserRole.KURUCU)}
-                className="flex flex-col items-center justify-center p-2 rounded-lg bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors"
-              >
-                <Glasses size={20} className="text-purple-600 dark:text-purple-400 mb-1" />
-                <span className="text-[10px] font-bold text-purple-800 dark:text-purple-300">Kurucu</span>
-              </button>
-
-              <button 
-                onClick={() => handleDemoLogin(UserRole.MUDUR)}
-                className="flex flex-col items-center justify-center p-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
-              >
-                <Briefcase size={20} className="text-indigo-600 dark:text-indigo-400 mb-1" />
-                <span className="text-[10px] font-bold text-indigo-800 dark:text-indigo-300">Müdür</span>
-              </button>
-
-              <button 
-                onClick={() => handleDemoLogin(UserRole.OGRETMEN)}
-                className="flex flex-col items-center justify-center p-2 rounded-lg bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
-              >
-                <GraduationCap size={20} className="text-blue-600 dark:text-blue-400 mb-1" />
-                <span className="text-[10px] font-bold text-blue-800 dark:text-blue-300">Öğretmen</span>
-              </button>
-
-              <button 
-                onClick={() => handleDemoLogin(UserRole.VELI)}
-                className="flex flex-col items-center justify-center p-2 rounded-lg bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
-              >
-                <Users size={20} className="text-green-600 dark:text-green-400 mb-1" />
-                <span className="text-[10px] font-bold text-green-800 dark:text-green-300">Veli</span>
-              </button>
-
-              <button 
-                onClick={() => handleDemoLogin(UserRole.PERSONEL)}
-                className="flex flex-col items-center justify-center p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              >
-                <User size={20} className="text-slate-600 dark:text-slate-400 mb-1" />
-                <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">Personel</span>
-              </button>
-           </div>
-        </div>
 
         <div className="mt-8 text-center text-xs text-slate-400 dark:text-slate-500">
           <p>&copy; 2024 PNR Sanat Akademisi. Tüm hakları saklıdır.</p>
