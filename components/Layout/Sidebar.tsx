@@ -136,11 +136,12 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, userName, isOpen, toggleSid
               w-full flex items-center justify-between ${paddingLeft} py-3 rounded-xl transition-all duration-200 group
               ${isExpanded && showTitle && level === 0 ? 'bg-slate-50 dark:bg-slate-800/50 text-pnr-purple dark:text-pnr-cyan' : ''}
               ${level > 0 ? 'text-sm' : ''}
-              ${!isExpanded && level > 0 ? 'text-slate-500 hover:text-slate-900 dark:hover:text-white' : ''}
+              ${!isExpanded && level === 0 ? 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}
+              ${!isExpanded && level > 0 ? 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white' : ''}
             `}
           >
             <div className={`flex items-center gap-3 ${level > 0 ? 'gap-2' : ''}`}>
-              {level === 0 && <Icon size={22} className="shrink-0" />}
+              {level === 0 && <Icon size={22} className={`shrink-0 transition-colors duration-200 ${isExpanded ? '' : 'text-slate-500 dark:text-slate-400 group-hover:text-pnr-purple dark:group-hover:text-pnr-cyan'}`} />}
               {showTitle && <span className={`font-semibold ${level > 0 ? 'font-medium' : ''} whitespace-nowrap`}>{item.title}</span>}
             </div>
             {showTitle && (
@@ -151,7 +152,7 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, userName, isOpen, toggleSid
           {showTitle && isExpanded && (
             <div className={`
                mt-1 space-y-0.5 
-               ${level === 0 ? 'border-l-2 border-slate-100 dark:border-slate-800 ml-4 pl-0 py-1' : ''} 
+               ${level === 0 ? 'border-l-2 border-slate-100 dark:border-slate-700 ml-4 pl-0 py-1' : ''} 
                animate-in fade-in slide-in-from-left-2 duration-200
             `}>
               {item.subItems!.map(sub => renderMenuItem(sub, level + 1))}
@@ -172,13 +173,13 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, userName, isOpen, toggleSid
               : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'}
           `}
         >
-          {level === 0 && <Icon size={22} className="shrink-0" />}
+          {level === 0 && <Icon size={22} className={`shrink-0 transition-colors duration-200 ${active ? 'text-white' : 'text-slate-500 dark:text-slate-400 group-hover:text-pnr-purple dark:group-hover:text-pnr-cyan'}`} />}
 
           {showTitle && (
             <span className={`
-              whitespace-nowrap
+              whitespace-nowrap transition-colors duration-200
               ${level === 0 ? 'font-semibold text-sm' : 'text-sm'}
-              ${active ? 'text-white' : 'text-slate-500 dark:text-slate-400'}
+              ${active ? 'text-white' : 'text-slate-600 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-white'}
             `}>
               {item.title}
             </span>
