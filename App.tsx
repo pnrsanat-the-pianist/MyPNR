@@ -211,7 +211,7 @@ const App: React.FC = () => {
 
       // System
       case '/system/users':
-        return renderProtectedPage('kullanicilar', (canEdit) => <Users />);
+        return renderProtectedPage('kullanicilar', (canEdit) => <Users canEdit={canEdit} />);
       case '/system/permissions':
         return renderProtectedPage('yetkiler', (canEdit) => <Permissions currentUserRole={userRole} />);
       case '/system/settings':
