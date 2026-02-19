@@ -33,7 +33,7 @@ const AdminDashboard: React.FC = () => {
     const [todos, setTodos] = useState<TodoItem[]>([]);
 
     // Stats
-    const [leadStats, setLeadStats] = useState({ takip: 0, deneme: 0, kayit: 0, iptal: 0 });
+    const [leadStats, setLeadStats] = useState({ takip: 0, deneme: 0, kayit: 0, gorusuldu: 0, iptal: 0 });
     const [passiveThisMonth, setPassiveThisMonth] = useState(0);
 
     // New: Daily Schedule & Finance
@@ -166,12 +166,17 @@ const AdminDashboard: React.FC = () => {
 
             // --- PROCESS LEADS ---
             if (leadsData) {
-                const stats = { takip: 0, deneme: 0, kayit: 0, iptal: 0 };
+                const stats = { takip: 0, deneme: 0, kayit: 0, gorusuldu: 0, iptal: 0 };
                 leadsData.forEach((l: any) => {
-                    if (l.status === 'Takip') stats.takip++;
-                    else if (l.status === 'Deneme') stats.deneme++;
-                    else if (l.status === 'Kayıt') stats.kayit++;
-                    else if (l.status === 'İptal') stats.iptal++;
+                    const s = (l.status || '').toString().trim();
+                    if (s === 'Takip') stats.takip++;
+                    else if (s === 'Deneme') stats.deneme++;
+                    else if (s === 'Kayıt') stats.kayit++;
+                    else if (s === 'İptal') stats.iptal++;
+                    // Robust check for "Görüşüldü"
+                    else if (/^g[oö]r[uü][sş][uü]ld[uü]/i.test(s) || s.toLowerCase().includes('gorus') || s.toLowerCase().includes('görüş')) {
+                        stats.gorusuldu++;
+                    }
                 });
                 setLeadStats(stats);
             }
@@ -358,12 +363,12 @@ const AdminDashboard: React.FC = () => {
                                 </div>
                                 <CheckCircle2 size={18} className="text-green-400 opacity-60" />
                             </div>
-                            <div className="bg-red-50 dark:bg-red-900/10 p-3 rounded-xl flex items-center justify-between border border-red-100 dark:border-red-900/30">
+                            <div className="bg-orange-50 dark:bg-orange-900/10 p-3 rounded-xl flex items-center justify-between border border-orange-100 dark:border-orange-900/30">
                                 <div>
-                                    <div className="text-[10px] uppercase font-bold text-red-600 dark:text-red-500">İptal</div>
-                                    <div className="text-xl font-bold text-red-700 dark:text-red-400">{leadStats.iptal}</div>
+                                    <div className="text-[10px] uppercase font-bold text-orange-600 dark:text-orange-500">Görüşüldü</div>
+                                    <div className="text-xl font-bold text-orange-700 dark:text-orange-400">{leadStats.gorusuldu}</div>
                                 </div>
-                                <XCircle size={18} className="text-red-400 opacity-60" />
+                                <MessageSquare size={18} className="text-orange-400 opacity-60" />
                             </div>
                         </div>
                     </div>

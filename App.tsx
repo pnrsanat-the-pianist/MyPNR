@@ -220,7 +220,7 @@ const App: React.FC = () => {
       case '/education/crm':
         return renderProtectedPage('crm', (canEdit) => <CRM canEdit={canEdit} />);
       case '/education/leads':
-        return renderProtectedPage('yeni-talep', (canEdit) => <Leads />);
+        return renderProtectedPage('yeni-talep', (canEdit) => <Leads currentUserRole={userRole} />);
       case '/education/dance-classes':
         return renderProtectedPage('bale-siniflari', (canEdit) => <DanceClasses />);
       case '/education/instrument-lessons':
