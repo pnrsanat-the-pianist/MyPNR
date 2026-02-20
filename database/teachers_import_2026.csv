@@ -1,0 +1,8 @@
+id,name,tc_no,phone,email,sgk_entry_date,education_info,salary_type,salary_amount,photo_url,files,status,address,notes,user_id,created_at,updated_at
+63f8bb1a-7b3b-4c5e-8d2a-1e4b86e92f11,Damla Aras,22222222222,5553332211,ogretmen@pnrsanat.com,2026-01-01,,hourly,750,,,active,Kadıköy İstanbul,,,,
+92a8c3e4-4d2b-4f01-a6b1-9c8d7e6f5a43,Di̇de Nazeni̇n Çapan,22222222223,5553332212,ogretmen@pnrsanat.com,2026-01-01,,hourly,750,,,active,Kadıköy İstanbul,,,,
+b5e4d3c2-1a9b-4c8d-7e6f-5a4392a8c3e4,Erkan Boz,22222222224,5553332213,ogretmen@pnrsanat.com,2026-01-01,,hourly,750,,,active,Kadıköy İstanbul,,,,
+2c3d4e5f-6a7b-48c9-d0e1-f2a3b4c5d6e7,Oksana Batalova Uzun,22222222225,5553332214,ogretmen@pnrsanat.com,2026-01-01,,hourly,750,,,active,Kadıköy İstanbul,,,,
+d9e8f7a6-b5c4-4321-0987-654321fedcba,Pinar Tahi̇roğlu,22222222226,5553332215,ogretmen@pnrsanat.com,2026-01-01,,hourly,750,,,active,Kadıköy İstanbul,,,,
+a1b2c3d4-e5f6-47a8-b9c0-d1e2f3a4b5c6,Reyhan Toy,22222222227,5553332216,ogretmen@pnrsanat.com,2026-01-01,,hourly,750,,,active,Kadıköy İstanbul,,,,
+f9e8d7c6-b5a4-4321-0d1e-2f3a4b5c6d7e,Sarp Çehreli̇,22222222228,5553332217,ogretmen@pnrsanat.com,2026-01-01,,hourly,750,,,active,Kadıköy İstanbul,,,,

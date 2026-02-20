@@ -102,6 +102,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
 
   // Filters & Sort
   const [searchTerm, setSearchTerm] = useState('');
+  const [teacherFilter, setTeacherFilter] = useState<string | null>(null);
   const [showPassive, setShowPassive] = useState(false);
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
 
@@ -246,6 +247,28 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
   useEffect(() => {
     fetchData();
     fetchMetadata();
+  }, []);
+
+  // Handle URL filtering separately to catch hash changes
+  useEffect(() => {
+    const handleHashFilter = () => {
+      const hash = window.location.hash;
+      if (hash.includes('?')) {
+        const params = new URLSearchParams(hash.split('?')[1]);
+        const teacherParam = params.get('teacher');
+        if (teacherParam) {
+          const name = decodeURIComponent(teacherParam);
+          setTeacherFilter(name);
+          setSearchTerm(''); // Clear search when specific teacher filter is active
+        }
+      } else {
+        setTeacherFilter(null);
+      }
+    };
+
+    handleHashFilter(); // Run on mount/update
+    window.addEventListener('hashchange', handleHashFilter);
+    return () => window.removeEventListener('hashchange', handleHashFilter);
   }, []);
 
   // ... (CSV Upload Logic remains same) ...
@@ -553,6 +576,13 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
   const processedEnrollments = useMemo(() => {
     let data = [...enrollments];
     if (!showPassive) data = data.filter(item => item.status !== 'inactive');
+
+    // Strict Teacher Filter
+    if (teacherFilter) {
+      data = data.filter(item => item.teacher === teacherFilter);
+    }
+
+    // Search Term Filter
     if (searchTerm) {
       const lowerTerm = searchTerm.toLowerCase();
       data = data.filter(item =>
@@ -561,6 +591,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
         item.teacher?.toLowerCase().includes(lowerTerm)
       );
     }
+
     if (sortConfig) {
       data.sort((a, b) => {
         const aValue = a[sortConfig.key] || '';
@@ -571,7 +602,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
       });
     }
     return data;
-  }, [enrollments, searchTerm, sortConfig, showPassive]);
+  }, [enrollments, searchTerm, teacherFilter, sortConfig, showPassive]);
 
   const SortIcon = ({ columnKey }: { columnKey: SortKey }) => {
     if (sortConfig?.key !== columnKey) return <ArrowUpDown size={14} className="ml-1 opacity-40 group-hover:opacity-100" />;
@@ -596,7 +627,10 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
               type="text"
               placeholder="Öğrenci, branş veya öğretmen..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                if (e.target.value && teacherFilter) setTeacherFilter(null); // Clear specific filter if search starts
+              }}
               className="w-full sm:w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white pl-10 pr-4 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-pnr-purple placeholder:text-slate-400 dark:placeholder:text-slate-500 h-[42px]"
             />
           </div>
@@ -653,6 +687,28 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
           )}
         </div>
       </div>
+
+      {teacherFilter && (
+        <div className="flex items-center gap-2 animate-in slide-in-from-left-2 duration-300">
+          <div className="px-4 py-2 bg-pnr-purple/10 border border-pnr-purple/20 text-pnr-purple rounded-xl flex items-center gap-3 shadow-sm">
+            <Filter size={16} />
+            <span className="text-sm font-bold">
+              Filtre: <span className="text-slate-900 dark:text-white">{teacherFilter}</span> öğretmenin öğrencileri
+            </span>
+            <button
+              onClick={() => {
+                setTeacherFilter(null);
+                window.location.hash = window.location.hash.split('?')[0];
+              }}
+              className="p-1 hover:bg-pnr-purple/20 rounded-lg transition-colors"
+              title="Filtreyi Temizle"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <span className="text-xs text-slate-400 font-medium">({processedEnrollments.length} Kayıt)</span>
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
