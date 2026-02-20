@@ -261,13 +261,45 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
   };
   const parseDate = (val: string | null) => {
     if (!val) return null;
-    if (val.includes('-')) return val.split('T')[0];
-    if (val.includes('.')) {
-      const parts = val.split('.');
+    const v = val.trim();
+    if (v.includes('-')) return v.split('T')[0];
+    if (v.includes('.')) {
+      const parts = v.split('.');
       if (parts.length === 3) {
-        let year = parts[2];
-        if (year.length === 3) year = '2' + year;
-        return `${year}-${parts[1]}-${parts[0]}`;
+        let d = parts[0].padStart(2, '0');
+        let m = parts[1].padStart(2, '0');
+        let y = parts[2];
+        if (y.length === 2) y = '20' + y;
+        else if (y.length === 3) y = '2' + y;
+        return `${y}-${m}-${d}`;
+      }
+    }
+    // Handle "5 Dec 24" or "19 January 10" or "26 Şubat 2022"
+    const months: Record<string, string> = {
+      'january': '01', 'february': '02', 'march': '03', 'april': '04', 'may': '05', 'june': '06',
+      'july': '07', 'august': '08', 'september': '09', 'october': '10', 'november': '11', 'december': '12',
+      'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
+      'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12',
+      'ocak': '01', 'şubat': '02', 'mart': '03', 'nisan': '04', 'mayıs': '05', 'haziran': '06',
+      'temmuz': '07', 'ağustos': '08', 'eylül': '09', 'ekim': '10', 'kasım': '11', 'aralık': '12'
+    };
+    const parts = v.split(/\s+/);
+    if (parts.length >= 3) {
+      const day = parts[0].padStart(2, '0');
+      const monthStr = parts[1].toLowerCase().replace('i̇', 'i').replace('ş', 's').replace('ç', 'c').replace('ö', 'o').replace('ü', 'u').replace('ğ', 'g');
+      // Simple normalization for month matching
+      let month = months[monthStr];
+      if (!month) {
+        // Try direct lookup for common abbreviations
+        const monthMap: Record<string, string> = {
+          'subat': '02', 'eylul': '09', 'kasim': '11', 'aralik': '12'
+        };
+        month = monthMap[monthStr];
+      }
+      let year = parts[2];
+      if (year.length === 2) year = '20' + year;
+      if (month && !isNaN(parseInt(day)) && !isNaN(parseInt(year))) {
+        return `${year}-${month}-${day}`;
       }
     }
     return null;
@@ -287,36 +319,38 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
       try {
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
-          if (!line.trim() || line.toLowerCase().startsWith('create table')) continue;
+          if (!line.trim() || line.toLowerCase().startsWith('full_name') || line.toLowerCase().startsWith('create table')) continue;
+
           const cols = parseCSVLine(line);
-          const fullName = cleanValue(cols[3]);
-          const tcNo = cleanValue(cols[4]);
+          const fullName = cleanValue(cols[0]);
+          const tcNo = cleanValue(cols[6]);
+
           if (fullName && tcNo) {
             const student = {
               full_name: fullName,
               tc_no: tcNo,
               dob: parseDate(cleanValue(cols[5])),
-              address: cleanValue(cols[6]),
-              social_media_approval: cleanValue(cols[7]) || 'Hayır',
+              address: cleanValue(cols[7]),
+              social_media_approval: cleanValue(cols[10]) || 'Hayır',
               health_condition: cleanValue(cols[8]) || 'Hayır',
               health_condition_details: cleanValue(cols[9]),
-              status: 'active',
-              main_branch: cleanValue(cols[11]),
-              sub_branch: cleanValue(cols[12]),
-              teacher: cleanValue(cols[13]),
-              start_date: parseDate(cleanValue(cols[14])) || new Date().toISOString().split('T')[0],
-              parent1_name: cleanValue(cols[17]),
-              parent1_relation: cleanValue(cols[18]),
-              parent1_job: cleanValue(cols[19]),
-              parent1_tc: cleanValue(cols[20]),
-              parent1_phone: cleanValue(cols[21]),
-              parent1_email: cleanValue(cols[22]),
-              parent2_name: cleanValue(cols[23]),
-              parent2_relation: cleanValue(cols[24]),
-              parent2_job: cleanValue(cols[25]),
-              parent2_tc: cleanValue(cols[26]),
-              parent2_phone: cleanValue(cols[27]),
-              parent2_email: cleanValue(cols[28]),
+              status: cleanValue(cols[3])?.toLowerCase() === 'passive' ? 'inactive' : 'active',
+              main_branch: cleanValue(cols[1]) || (['Bale', 'Hi̇phop', 'Modern Dans'].includes(cleanValue(cols[2]) || '') ? 'Bale / Dans' : 'Enstrüman'),
+              sub_branch: cleanValue(cols[2]),
+              teacher: cleanValue(cols[23]),
+              start_date: parseDate(cleanValue(cols[4])) || new Date().toISOString().split('T')[0],
+              parent1_name: cleanValue(cols[11]),
+              parent1_relation: cleanValue(cols[12]),
+              parent1_job: cleanValue(cols[16]),
+              parent1_tc: cleanValue(cols[14]),
+              parent1_phone: cleanValue(cols[13]),
+              parent1_email: cleanValue(cols[15]),
+              parent2_name: cleanValue(cols[17]),
+              parent2_relation: cleanValue(cols[18]),
+              parent2_job: cleanValue(cols[22]),
+              parent2_tc: cleanValue(cols[20]),
+              parent2_phone: cleanValue(cols[19]),
+              parent2_email: cleanValue(cols[21]),
             };
             studentsToInsert.push(student);
           }
