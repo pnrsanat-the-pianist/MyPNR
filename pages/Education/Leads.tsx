@@ -36,6 +36,7 @@ interface Lead {
   createdAt: string;
   rawDate: number; // For correct sorting
   type: LeadType;
+  followUpDate: string;
 }
 
 const BRANCH_OPTIONS = ['Bale', 'Piyano', 'Gitar', 'Keman', 'Dans', 'Resim', 'Tiyatro'];
@@ -59,19 +60,21 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
   // Filtering & Sorting States
   const [searchTerm, setSearchTerm] = useState('');
   const [showCancelled, setShowCancelled] = useState(false);
+  const [showFutureLeads, setShowFutureLeads] = useState(false);
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
 
   // New Lead Form State
   const [subBranches, setSubBranches] = useState<string[]>([]);
   const [newLead, setNewLead] = useState({
-    type: 'Öğrenci' as LeadType,
-    contactName: '',
+    studentName: '',
+    parentName: '',
     age: '',
     branch: '', // Initialize as empty
     phone: '0',
     source: 'Instagram' as LeadSource,
-    initialNote: ''
+    initialNote: '',
+    followUpDate: new Date().toISOString().split('T')[0]
   });
 
   // New Note Input State (mapped by lead ID)
@@ -102,7 +105,8 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
           notes: item.notes || [], // JSONB column to array
           createdAt: new Date(item.created_at).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' }),
           rawDate: new Date(item.created_at).getTime(),
-          type: item.type as LeadType || 'Öğrenci'
+          type: item.type as LeadType || 'Öğrenci',
+          followUpDate: item.follow_up_date || new Date().toISOString().split('T')[0]
         }));
         setLeads(mappedLeads);
       }
@@ -167,17 +171,39 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
     }
   };
 
+  const handleFollowUpDateChange = async (id: string, newDate: string) => {
+    if (!newDate) return;
+
+    // Optimistic Update with Functional State
+    setLeads(prev => prev.map(lead =>
+      lead.id === id ? { ...lead, followUpDate: newDate } : lead
+    ));
+
+    try {
+      const { error } = await supabase
+        .from('new_leads')
+        .update({ follow_up_date: newDate })
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (err: any) {
+      console.error('Date Update Error:', err);
+      fetchData(); // Revert on error
+    }
+  };
+
   const handleEditClick = (e: React.MouseEvent, lead: Lead) => {
     e.stopPropagation();
     setEditingLeadId(lead.id);
     setNewLead({
-      type: 'Öğrenci',
-      contactName: lead.parentName || lead.studentName,
+      studentName: lead.studentName,
+      parentName: lead.parentName,
       age: lead.age.toString(),
       branch: lead.branch,
       phone: lead.phone,
       source: lead.source,
-      initialNote: ''
+      initialNote: '',
+      followUpDate: lead.followUpDate
     });
     setIsModalOpen(true);
   };
@@ -186,31 +212,33 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
     setIsModalOpen(false);
     setEditingLeadId(null);
     setNewLead({
-      type: 'Öğrenci',
-      contactName: '',
+      studentName: '',
+      parentName: '',
       age: '',
       branch: subBranches.length > 0 ? subBranches[0] : '',
       phone: '0',
       source: 'Instagram',
-      initialNote: ''
+      initialNote: '',
+      followUpDate: new Date().toISOString().split('T')[0]
     });
   };
 
   const handleSaveLead = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLead.contactName || !newLead.phone) return;
+    if (!newLead.studentName || !newLead.phone) return;
     setLoading(true);
 
     try {
       // For teachers and institutions, we prefix the name to clarify in the list
       const commonData = {
-        student_name: newLead.contactName,
+        student_name: newLead.studentName,
         age: parseInt(newLead.age) || 0,
         branch: newLead.branch,
-        parent_name: newLead.contactName,
+        parent_name: newLead.parentName,
         phone: newLead.phone,
         source: newLead.source,
-        type: newLead.type
+        type: 'Öğrenci' as LeadType, // Default to Student as differentiation is removed from UI
+        follow_up_date: newLead.followUpDate
       };
 
       if (editingLeadId) {
@@ -419,6 +447,11 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
           lead.source.toLowerCase().includes(lowerTerm)
         );
       }
+      // 3. Future Follow-up Filter
+      if (!showFutureLeads) {
+        const today = new Date().toISOString().split('T')[0];
+        if (lead.followUpDate > today) return false;
+      }
       return true;
     });
 
@@ -446,7 +479,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
     }
 
     return result;
-  }, [leads, showCancelled, searchTerm, sortConfig]);
+  }, [leads, showCancelled, searchTerm, sortConfig, showFutureLeads]);
 
   const SortIcon = ({ columnKey }: { columnKey: SortKey }) => {
     if (sortConfig?.key !== columnKey) return <ArrowUpDown size={14} className="ml-1 opacity-40 group-hover:opacity-100" />;
@@ -500,6 +533,21 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
               </button>
             </div>
 
+            {/* Future Dates Switch */}
+            <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 h-[42px] flex-1 sm:flex-none justify-between sm:justify-start">
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-300">İleri Tarihliler</span>
+              <button
+                onClick={() => setShowFutureLeads(!showFutureLeads)}
+                className={`relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none ${showFutureLeads ? 'bg-pnr-purple' : 'bg-slate-300 dark:bg-slate-600'
+                  }`}
+              >
+                <span
+                  className={`inline-block w-3.5 h-3.5 transform bg-white rounded-full transition-transform duration-200 ml-1 mt-0.5 shadow-sm ${showFutureLeads ? 'translate-x-3.5' : 'translate-x-0'
+                    }`}
+                />
+              </button>
+            </div>
+
             <button
               onClick={() => setIsModalOpen(true)}
               className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px] flex-1 sm:flex-none"
@@ -519,21 +567,20 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
               <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                 <th className="p-4 w-10 text-center text-[10px] font-semibold text-slate-500 uppercase">Sil</th>
                 <th className="p-4 w-10 text-center text-[10px] font-semibold text-slate-500 uppercase tracking-tighter">İşlem</th>
-                <th className="p-4 w-28 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('createdAt')}>
-                  <div className="flex items-center">Tarih <SortIcon columnKey="createdAt" /></div>
+                <th className="p-4 w-32 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('createdAt')}>
+                  <div className="flex items-center">Kayıt Tarihi <SortIcon columnKey="createdAt" /></div>
                 </th>
-                <th className="p-4 w-28 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('type')}>
-                  <div className="flex items-center">Tipi <SortIcon columnKey="type" /></div>
+                <th className="p-4 w-40 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('studentName')}>
+                  <div className="flex items-center">Öğrenci Adı <SortIcon columnKey="studentName" /></div>
                 </th>
                 <th className="p-4 w-32 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('branch')}>
                   <div className="flex items-center">Branş <SortIcon columnKey="branch" /></div>
                 </th>
-                <th className="p-4 w-32 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('source')}>
-                  <div className="flex items-center">Kaynak <SortIcon columnKey="source" /></div>
-                </th>
-                <th className="p-4 w-80 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase">İlk Not</th>
                 <th className="p-4 w-40 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('parentName')}>
                   <div className="flex items-center uppercase">İLETİŞİM <SortIcon columnKey="parentName" /></div>
+                </th>
+                <th className="p-4 w-32 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('followUpDate')}>
+                  <div className="flex items-center">Takip Tarihi <SortIcon columnKey="followUpDate" /></div>
                 </th>
                 <th className="p-4 w-32 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase cursor-pointer hover:bg-slate-100 group" onClick={() => handleSort('status')}>
                   <div className="flex items-center">Durum <SortIcon columnKey="status" /></div>
@@ -563,47 +610,27 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                       <td className="p-4 text-slate-400 text-center">
                         {expandedRows.includes(lead.id) ? <ChevronDown size={20} className="mx-auto" /> : <ChevronRight size={20} className="mx-auto" />}
                       </td>
-                      <td className="p-4 text-slate-500 dark:text-slate-400 text-[11px] font-medium leading-tight">
-                        {lead.createdAt}
+                      <td className="p-4">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 inline-flex items-center gap-1.5 w-fit whitespace-nowrap">
+                            {getSourceIcon(lead.source)}
+                            {lead.source}
+                          </span>
+                          <span className="text-slate-500 dark:text-slate-400 text-[11px] font-medium leading-tight">
+                            {lead.createdAt}
+                          </span>
+                        </div>
                       </td>
                       <td className="p-4">
                         <div className="flex flex-col">
-                          {lead.type === 'Öğrenci' ? (
-                            <>
-                              <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-                                <Baby size={16} />
-                                <span className="font-bold text-xs tracking-tight">Öğrenci</span>
-                              </div>
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 ml-5">Yaşı: {lead.age}</span>
-                            </>
-                          ) : lead.type === 'Öğretmen' ? (
-                            <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                              <UserCheck size={16} />
-                              <span className="font-bold text-xs tracking-tight">Öğretmen</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 text-orange-600 dark:text-orange-400">
-                              <Building2 size={16} />
-                              <span className="font-bold text-xs tracking-tight">Kurum</span>
-                            </div>
-                          )}
+                          <span className="text-sm font-bold text-slate-900 dark:text-white">{lead.studentName}</span>
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Yaşı: {lead.age}</span>
                         </div>
                       </td>
                       <td className="p-4">
                         <span className={`text-sm font-bold leading-none ${getBranchStyle(lead.branch)}`}>
                           {lead.branch}
                         </span>
-                      </td>
-                      <td className="p-4">
-                        <span className="text-xs font-bold px-2 py-1.5 rounded bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 inline-flex items-center gap-2 whitespace-nowrap">
-                          {getSourceIcon(lead.source)}
-                          {lead.source}
-                        </span>
-                      </td>
-                      <td className="p-4 w-80">
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-3 italic leading-tight">
-                          {lead.notes.length > 0 ? lead.notes[0].content : '-'}
-                        </p>
                       </td>
                       <td className="p-4 w-60">
                         <div className="flex flex-col">
@@ -612,6 +639,16 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                             <Phone size={14} className="text-pnr-cyan" />
                             <span>{lead.phone}</span>
                           </div>
+                        </div>
+                      </td>
+                      <td className="p-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="date"
+                            value={lead.followUpDate}
+                            onChange={(e) => handleFollowUpDateChange(lead.id, e.target.value)}
+                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-pnr-purple w-[110px]"
+                          />
                         </div>
                       </td>
                       <td className="p-4" onClick={(e) => e.stopPropagation()}>
@@ -717,139 +754,148 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
       </div>
 
       {/* LEAD MODAL (Create / Edit) */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-pnr-card w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95 duration-200">
+      {
+        isModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="bg-white dark:bg-pnr-card w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95 duration-200">
 
-            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <UserPlus size={20} className="text-pnr-purple" />
-                {editingLeadId ? 'Talebi Düzenle' : 'Yeni Talep Oluştur'}
-              </h2>
-              <button onClick={handleCloseModal} className="text-slate-500 hover:text-slate-900 dark:hover:text-white">
-                <X size={20} />
-              </button>
-            </div>
+              <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <UserPlus size={20} className="text-pnr-purple" />
+                  {editingLeadId ? 'Talebi Düzenle' : 'Yeni Talep Oluştur'}
+                </h2>
+                <button onClick={handleCloseModal} className="text-slate-500 hover:text-slate-900 dark:hover:text-white">
+                  <X size={20} />
+                </button>
+              </div>
 
-            <div className="flex-1 overflow-y-auto p-4 md:p-6">
-              <form onSubmit={handleSaveLead} className="space-y-6">
-                {/* Lead Type Switched */}
-                <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-                  {(['Öğrenci', 'Öğretmen', 'Kurum'] as LeadType[]).map((t) => (
+              <div className="flex-1 overflow-y-auto p-4 md:p-6">
+                <form onSubmit={handleSaveLead} className="space-y-6">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">
+                        Öğrenci Adı *
+                      </label>
+                      <input
+                        type="text" required
+                        value={newLead.studentName}
+                        onChange={(e) => setNewLead({ ...newLead, studentName: e.target.value })}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                        placeholder="Öğrenci Ad Soyad"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">
+                        Veli Adı
+                      </label>
+                      <input
+                        type="text"
+                        value={newLead.parentName}
+                        onChange={(e) => setNewLead({ ...newLead, parentName: e.target.value })}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                        placeholder="Veli Ad Soyad"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Telefon *</label>
+                      <input
+                        type="tel" required
+                        placeholder="0532-"
+                        value={newLead.phone}
+                        onChange={(e) => {
+                          let val = e.target.value.replace(/\D/g, '');
+                          if (!val.startsWith('0')) val = '0' + val;
+                          setNewLead({ ...newLead, phone: val.slice(0, 11) });
+                        }}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Yaş (Opsiyonel)</label>
+                      <input
+                        type="number"
+                        value={newLead.age}
+                        onChange={(e) => setNewLead({ ...newLead, age: e.target.value })}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                        placeholder="Yaş giriniz"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">İlgilendiği Branş *</label>
+                      <select
+                        value={newLead.branch}
+                        onChange={(e) => setNewLead({ ...newLead, branch: e.target.value })}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                      >
+                        {subBranches.length > 0 ? (
+                          subBranches.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))
+                        ) : (
+                          BRANCH_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))
+                        )}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Data Kaynağı *</label>
+                      <select
+                        value={newLead.source}
+                        onChange={(e) => setNewLead({ ...newLead, source: e.target.value as LeadSource })}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                      >
+                        {SOURCE_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Takip Tarihi</label>
+                    <input
+                      type="date"
+                      value={newLead.followUpDate}
+                      onChange={(e) => setNewLead({ ...newLead, followUpDate: e.target.value })}
+                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Not (Opsiyonel)</label>
+                    <textarea
+                      rows={3}
+                      value={newLead.initialNote}
+                      onChange={(e) => setNewLead({ ...newLead, initialNote: e.target.value })}
+                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none resize-none"
+                      placeholder="Eklemek istediğiniz not..."
+                    />
+                  </div>
+
+                  <div className="flex justify-end pt-2">
                     <button
-                      key={t}
-                      type="button"
-                      onClick={() => setNewLead({ ...newLead, type: t })}
-                      className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newLead.type === t
-                        ? 'bg-white dark:bg-slate-700 text-pnr-purple shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                        }`}
+                      type="submit"
+                      disabled={loading}
+                      className="bg-pnr-purple hover:bg-pnr-indigo text-white px-6 py-2.5 rounded-xl font-bold transition-colors shadow-lg shadow-pnr-purple/20 disabled:opacity-50"
                     >
-                      {t}
+                      {loading ? 'İşleniyor...' : (editingLeadId ? 'Güncelle' : 'Kaydet')}
                     </button>
-                  ))}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">
-                    İlgili Kişi Adı *
-                  </label>
-                  <input
-                    type="text" required
-                    value={newLead.contactName}
-                    onChange={(e) => setNewLead({ ...newLead, contactName: e.target.value })}
-                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                    placeholder="Ad Soyad giriniz"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Telefon *</label>
-                    <input
-                      type="tel" required
-                      placeholder="0532-"
-                      value={newLead.phone}
-                      onChange={(e) => {
-                        let val = e.target.value.replace(/\D/g, '');
-                        if (!val.startsWith('0')) val = '0' + val;
-                        setNewLead({ ...newLead, phone: val.slice(0, 11) });
-                      }}
-                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                    />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Yaş (Opsiyonel)</label>
-                    <input
-                      type="number"
-                      value={newLead.age}
-                      onChange={(e) => setNewLead({ ...newLead, age: e.target.value })}
-                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                      placeholder="Yaş giriniz"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">İlgilendiği Branş *</label>
-                    <select
-                      value={newLead.branch}
-                      onChange={(e) => setNewLead({ ...newLead, branch: e.target.value })}
-                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                    >
-                      {subBranches.length > 0 ? (
-                        subBranches.map(opt => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))
-                      ) : (
-                        BRANCH_OPTIONS.map(opt => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))
-                      )}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Data Kaynağı *</label>
-                    <select
-                      value={newLead.source}
-                      onChange={(e) => setNewLead({ ...newLead, source: e.target.value as LeadSource })}
-                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                    >
-                      {SOURCE_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Not (Opsiyonel)</label>
-                  <textarea
-                    rows={3}
-                    value={newLead.initialNote}
-                    onChange={(e) => setNewLead({ ...newLead, initialNote: e.target.value })}
-                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none resize-none"
-                    placeholder="Eklemek istediğiniz not..."
-                  />
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="bg-pnr-purple hover:bg-pnr-indigo text-white px-6 py-2.5 rounded-xl font-bold transition-colors shadow-lg shadow-pnr-purple/20 disabled:opacity-50"
-                  >
-                    {loading ? 'İşleniyor...' : (editingLeadId ? 'Güncelle' : 'Kaydet')}
-                  </button>
-                </div>
-              </form>
+                </form>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
-    </div>
+    </div >
   );
 };
 
