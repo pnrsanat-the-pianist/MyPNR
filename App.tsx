@@ -9,7 +9,7 @@ import Teachers from './pages/Management/Teachers';
 import Contracts from './pages/Management/Contracts';
 import Todo from './pages/Management/Todo';
 import CRM from './pages/Education/CRM';
-import Leads from './pages/Education/Leads';
+import Leads from './pages/Management/Leads';
 import Users from './pages/System/Users';
 import Permissions from './pages/System/Permissions';
 import DanceClasses from './pages/Education/DanceClasses';
@@ -219,7 +219,7 @@ const App: React.FC = () => {
       // Education
       case '/education/crm':
         return renderProtectedPage('crm', (canEdit) => <CRM canEdit={canEdit} />);
-      case '/education/leads':
+      case '/management/leads':
         return renderProtectedPage('yeni-talep', (canEdit) => <Leads currentUserRole={userRole} />);
       case '/education/dance-classes':
         return renderProtectedPage('bale-siniflari', (canEdit) => <DanceClasses />);

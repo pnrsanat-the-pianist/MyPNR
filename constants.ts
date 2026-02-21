@@ -1,19 +1,19 @@
 
-import { 
-  LayoutDashboard, 
-  Briefcase, 
-  Users, 
-  FileText, 
-  CheckSquare, 
-  GraduationCap, 
-  UserPlus, 
-  CalendarCheck, 
-  CalendarDays, 
-  CreditCard, 
-  TrendingUp, 
-  Wallet, 
-  Landmark, 
-  Settings, 
+import {
+  LayoutDashboard,
+  Briefcase,
+  Users,
+  FileText,
+  CheckSquare,
+  GraduationCap,
+  UserPlus,
+  CalendarCheck,
+  CalendarDays,
+  CreditCard,
+  TrendingUp,
+  Wallet,
+  Landmark,
+  Settings,
   Shield,
   Music
 } from 'lucide-react';
@@ -47,6 +47,13 @@ export const MENU_ITEMS: NavItem[] = [
     icon: Briefcase,
     roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR],
     subItems: [
+      {
+        id: 'yeni-talep',
+        title: 'Yeni Talep',
+        path: '/management/leads',
+        icon: UserPlus,
+        roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL]
+      },
       { id: 'branslar', title: 'Branşlar', path: '/management/branches' },
       { id: 'ogretmenler', title: 'Öğretmen Girişi', path: '/management/teachers' },
       { id: 'sozlesmeler', title: 'Sözleşmeler', path: '/management/contracts' },
@@ -59,37 +66,30 @@ export const MENU_ITEMS: NavItem[] = [
     icon: GraduationCap,
     roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL, UserRole.OGRETMEN, UserRole.VELI],
     subItems: [
-      { 
-        id: 'crm', 
-        title: 'CRM (Öğrenci)', 
+      {
+        id: 'crm',
+        title: 'CRM (Öğrenci)',
         path: '/education/crm',
-        roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL, UserRole.OGRETMEN, UserRole.VELI] 
+        roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL, UserRole.OGRETMEN, UserRole.VELI]
       },
-      { 
-        id: 'yeni-talep', 
-        title: 'Yeni Talep', 
-        path: '/education/leads', 
-        icon: UserPlus,
-        roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL] 
-      },
-      { 
-        id: 'enstruman-dersleri', 
-        title: 'Enstrüman Dersleri', 
-        path: '/education/instrument-lessons', 
+      {
+        id: 'enstruman-dersleri',
+        title: 'Enstrüman Dersleri',
+        path: '/education/instrument-lessons',
         icon: Music,
         roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL, UserRole.OGRETMEN, UserRole.VELI]
       },
-      { 
-        id: 'bale-siniflari', 
-        title: 'Bale / Dans Dersleri', 
-        path: '/education/dance-classes', 
+      {
+        id: 'bale-siniflari',
+        title: 'Bale / Dans Dersleri',
+        path: '/education/dance-classes',
         icon: Users,
         roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL, UserRole.OGRETMEN, UserRole.VELI]
       },
-      { 
-        id: 'ders-programi', 
-        title: 'Ders Programı', 
-        path: '/education/schedule', 
+      {
+        id: 'ders-programi',
+        title: 'Ders Programı',
+        path: '/education/schedule',
         icon: CalendarDays,
         roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL, UserRole.OGRETMEN, UserRole.VELI]
       },
