@@ -86,6 +86,7 @@ const Contracts: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [institutionLogo, setInstitutionLogo] = useState<string | null>(null);
 
   const componentRef = useRef<HTMLDivElement>(null);
 
@@ -97,18 +98,75 @@ const Contracts: React.FC = () => {
     try {
       const element = componentRef.current;
 
-      // Use html2canvas to capture the A4 preview element
-      // Increase scale for better PDF quality
-      const canvas = await html2canvas(element, {
+      // Create a temporary iframe to render the contract at fixed A4 width
+      // This avoids any DOM manipulation on the actual page
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.left = '-10000px';
+      iframe.style.top = '0';
+      iframe.style.width = '800px';
+      iframe.style.height = '2000px';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
+
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) throw new Error('iframe oluşturulamadı');
+
+      // Copy all stylesheets into the iframe
+      const stylesheets = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'));
+      let stylesHTML = '';
+      for (const sheet of stylesheets) {
+        stylesHTML += sheet.outerHTML;
+      }
+
+      // Write the contract HTML into the iframe with styles
+      iframeDoc.open();
+      iframeDoc.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          ${stylesHTML}
+          <style>
+            body { margin: 0; padding: 0; background: white; }
+            #pdf-render-target {
+              width: 800px;
+              padding: 56px;
+              background: white;
+              color: black;
+              font-family: 'Inter', sans-serif;
+              font-size: 13px;
+              line-height: 1.625;
+            }
+          </style>
+        </head>
+        <body>
+          <div id="pdf-render-target">${element.innerHTML}</div>
+        </body>
+        </html>
+      `);
+      iframeDoc.close();
+
+      // Wait for styles and layout to settle
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const target = iframeDoc.getElementById('pdf-render-target');
+      if (!target) throw new Error('Render hedefi bulunamadı');
+
+      // Capture with html2canvas
+      const canvas = await html2canvas(target, {
         scale: 2,
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff'
       });
 
+      // Remove iframe
+      document.body.removeChild(iframe);
+
       const imgData = canvas.toDataURL('image/png');
 
-      // Create jsPDF instance (A4 size)
+      // Create jsPDF instance (A4)
       const pdf = new jsPDF({
         orientation: 'p',
         unit: 'mm',
@@ -118,24 +176,35 @@ const Contracts: React.FC = () => {
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
 
-      // Calculate dimensions to fit image to A4
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+      // Scale image to fill full A4 width
+      const imgWidth = pdfWidth;
+      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
 
-      const finalWidth = imgWidth * ratio;
-      const finalHeight = imgHeight * ratio;
+      // Multi-page support
+      let heightLeft = imgHeight;
+      let position = 0;
+      let page = 0;
 
-      pdf.addImage(imgData, 'PNG', 0, 0, finalWidth, finalHeight);
+      while (heightLeft > 0) {
+        if (page > 0) {
+          pdf.addPage();
+        }
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pdfHeight;
+        position -= pdfHeight;
+        page++;
+      }
 
-      // Save the PDF
-      const fileName = `Sozlesme_${formData.studentName.replace(/\s+/g, '_')}_${new Date().toLocaleDateString('tr-TR').replace(/\./g, '_')}.pdf`;
+      // Filename: ÖğrenciAdı_Branşı_Program Sözleşmesi.pdf
+      const studentName = formData.studentName.trim().replace(/\s+/g, '_');
+      const branch = formData.branch.trim().replace(/\s+/g, '_');
+      const fileName = `${studentName}_${branch}_Program Sözleşmesi.pdf`;
       pdf.save(fileName);
 
       alert('Sözleşme PDF olarak indirildi.');
     } catch (err: any) {
       console.error('PDF Generation Error:', err);
-      alert('PDF oluşturulurken bir hata oluştu: ' + err.message);
+      alert('PDF oluşturulurken bir hata oluştu: ' + (err?.message || String(err)));
     } finally {
       setLoading(false);
     }
@@ -193,9 +262,31 @@ const Contracts: React.FC = () => {
     }
   };
 
+  // Fetch institution logo from settings
+  const fetchInstitutionLogo = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('institution_settings')
+        .select('value')
+        .eq('key', 'institution_logo')
+        .single();
+
+      if (error) {
+        if (error.code !== 'PGRST116') console.error('Logo fetch error:', error);
+        return;
+      }
+      if (data?.value) {
+        setInstitutionLogo(data.value);
+      }
+    } catch (err) {
+      console.error('Error fetching institution logo:', err);
+    }
+  };
+
   useEffect(() => {
     fetchStudents();
     fetchSettings();
+    fetchInstitutionLogo();
   }, []);
 
   // Filter Logic
@@ -305,67 +396,68 @@ const Contracts: React.FC = () => {
   // --- Contract Preview Component ---
   // Added id="contract-preview" for specific printing logic via index.html CSS
   const ContractDocument = React.forwardRef<HTMLDivElement>((props, ref) => (
-    <div id="contract-preview" ref={ref} className="bg-white text-black p-10 md:p-14 shadow-2xl max-w-[210mm] min-h-[297mm] mx-auto text-[13px] leading-relaxed relative print:shadow-none print:w-full print:max-w-none print:h-auto font-sans">
+    <div id="contract-preview" ref={ref} className="bg-white text-black p-6 md:p-8 shadow-2xl max-w-[210mm] min-h-[297mm] mx-auto text-[12px] leading-snug relative print:shadow-none print:w-full print:max-w-none print:h-auto font-sans">
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-8 border-b-2 border-slate-900 pb-6">
-        <div className="flex items-center gap-6">
-          <div className="w-20 h-20 bg-pnr-dark rounded-full flex items-center justify-center text-white font-bold text-4xl shadow-lg shrink-0">P</div>
+      <div className="flex items-center justify-between mb-4 border-b-2 border-slate-900 pb-3">
+        <div className="flex items-center gap-4">
+          {institutionLogo ? (
+            <img src={institutionLogo} alt="Kurum Logosu" className="w-[100px] h-auto object-contain shrink-0" crossOrigin="anonymous" />
+          ) : (
+            <div className="w-20 h-20 bg-pnr-dark rounded-full flex items-center justify-center text-white font-bold text-4xl shadow-lg shrink-0">P</div>
+          )}
           <div>
-            <h1 className="text-3xl font-bold uppercase tracking-tighter text-pnr-purple leading-none">PNR SANAT AKADEMİSİ</h1>
-            <p className="text-[11px] text-slate-600 uppercase tracking-[0.2em] font-bold mt-1">MEB KADIKÖY ÖZEL PINAR SANAT BALE VE MÜZİK OKULU</p>
+            <h1 className="text-lg font-bold uppercase tracking-wide text-slate-900 leading-tight">MEB KADIKÖY<br />ÖZEL PINAR SANAT BALE VE MÜZİK OKULU</h1>
+            <p className="text-base font-bold uppercase tracking-widest text-pnr-purple mt-0.5">ÖĞRENCİ KAYIT SÖZLEŞMESİ</p>
           </div>
         </div>
-        <div className="text-right text-[11px] text-slate-500 font-medium">
+        <div className="text-right text-[10px] text-slate-500 font-medium">
           <p>Tarih: {new Date().toLocaleDateString('tr-TR')}</p>
           <p>No: {Date.now().toString().slice(-6)}</p>
         </div>
       </div>
 
-      <div className="text-center mb-8">
-        <h2 className="inline-block font-bold text-xl uppercase tracking-widest border-b-4 border-pnr-purple/20 pb-1">ÖĞRENCİ KAYIT SÖZLEŞMESİ</h2>
-      </div>
 
       {/* Student Info Table */}
-      <div className="mb-8 border border-slate-300 rounded-xl overflow-hidden shadow-sm">
-        <div className="grid grid-cols-4 bg-slate-50 border-b border-slate-300 text-[10px] font-bold uppercase tracking-wider print:bg-slate-100">
-          <div className="p-3 border-r border-slate-300">ÖĞRENCİ ADI</div>
-          <div className="p-3 border-r border-slate-300">TC KİMLİK</div>
-          <div className="p-3 border-r border-slate-300">DOĞUM TARİHİ</div>
-          <div className="p-3">BRANŞ</div>
+      <div className="mb-4 border border-slate-300 rounded-lg overflow-hidden shadow-sm">
+        <div className="grid grid-cols-4 bg-slate-50 border-b border-slate-300 text-[9px] font-bold uppercase tracking-wider print:bg-slate-100">
+          <div className="p-2 border-r border-slate-300">ÖĞRENCİ ADI</div>
+          <div className="p-2 border-r border-slate-300">TC KİMLİK</div>
+          <div className="p-2 border-r border-slate-300">DOĞUM TARİHİ</div>
+          <div className="p-2">BRANŞ</div>
         </div>
-        <div className="grid grid-cols-4 text-sm font-bold bg-white">
-          <div className="p-3 border-r border-slate-300 uppercase">{formData.studentName || '—'}</div>
-          <div className="p-3 border-r border-slate-300 font-mono tracking-tighter">{formData.studentTc || '—'}</div>
-          <div className="p-3 border-r border-slate-300">{formData.studentDob ? new Date(formData.studentDob).toLocaleDateString('tr-TR') : '—'}</div>
-          <div className="p-3 text-pnr-purple uppercase">{formData.branch || '—'}</div>
+        <div className="grid grid-cols-4 text-xs font-bold bg-white">
+          <div className="p-2 border-r border-slate-300 uppercase">{formData.studentName || '—'}</div>
+          <div className="p-2 border-r border-slate-300 font-mono tracking-tighter">{formData.studentTc || '—'}</div>
+          <div className="p-2 border-r border-slate-300">{formData.studentDob ? new Date(formData.studentDob).toLocaleDateString('tr-TR') : '—'}</div>
+          <div className="p-2 text-pnr-purple uppercase">{formData.branch || '—'}</div>
         </div>
       </div>
 
       {/* Contract Body */}
-      <div className="space-y-6 text-slate-800 text-justify mb-10">
+      <div className="space-y-3 text-slate-800 text-justify mb-4">
 
         <section>
-          <h3 className="font-bold text-sm mb-2 uppercase text-slate-900 flex items-center gap-2">1. GENEL HÜKÜMLER</h3>
-          <p className="whitespace-pre-line pl-2 leading-relaxed opacity-90">{settings.generalRules}</p>
+          <h3 className="font-bold text-xs mb-1 uppercase text-slate-900">1. GENEL HÜKÜMLER</h3>
+          <p className="whitespace-pre-line pl-2 leading-snug opacity-90 text-[11px]">{settings.generalRules}</p>
         </section>
 
         <section>
-          <h3 className="font-bold text-sm mb-2 uppercase text-slate-900 flex items-center gap-2">2. TATİL VE ÇALIŞMA TAKVİMI</h3>
-          <p className="whitespace-pre-line pl-2 leading-relaxed opacity-90">{settings.holidayDates}</p>
+          <h3 className="font-bold text-xs mb-1 uppercase text-slate-900">2. TATİL VE ÇALIŞMA TAKVİMI</h3>
+          <p className="whitespace-pre-line pl-2 leading-snug opacity-90 text-[11px]">{settings.holidayDates}</p>
         </section>
 
         <section>
-          <h3 className="font-bold text-sm mb-2 uppercase text-slate-900 flex items-center gap-2">3. {formData.branch || 'BRANŞ'} BÖLÜMÜ ÖZEL KURALLARI</h3>
-          <p className="whitespace-pre-line pl-2 leading-relaxed opacity-90 font-medium text-pnr-indigo">{getBranchRuleText()}</p>
+          <h3 className="font-bold text-xs mb-1 uppercase text-slate-900">3. {formData.branch || 'BRANŞ'} BÖLÜMÜ ÖZEL KURALLARI</h3>
+          <p className="whitespace-pre-line pl-2 leading-snug opacity-90 font-medium text-pnr-indigo text-[11px]">{getBranchRuleText()}</p>
         </section>
 
         <section>
-          <h3 className="font-bold text-sm mb-2 uppercase text-slate-900 flex items-center gap-2">4. ÜCRETLENDİRME VE İADE</h3>
-          <p className="whitespace-pre-line pl-2 leading-relaxed opacity-90">{settings.paymentPolicy}</p>
+          <h3 className="font-bold text-xs mb-1 uppercase text-slate-900">4. ÜCRETLENDİRME VE İADE</h3>
+          <p className="whitespace-pre-line pl-2 leading-snug opacity-90 text-[11px]">{settings.paymentPolicy}</p>
         </section>
 
-        <div className="mt-8 p-4 bg-slate-50 rounded-xl border border-slate-200 text-[11px] italic text-slate-600 line-clamp-3 leading-snug">
+        <div className="mt-3 p-2 bg-slate-50 rounded-lg border border-slate-200 text-[10px] italic text-slate-600 leading-snug">
           * İşbu sözleşme, kurum ve veli arasında karşılıklı mutabakat ile imzalanmıştır. Veli, yukarıdaki maddeleri okuduğunu ve kabul ettiğini beyan eder.
           Eğitim başlangıç tarihi: <strong className="text-pnr-purple">{formData.startDate ? new Date(formData.startDate).toLocaleDateString('tr-TR') : '.../.../....'}</strong>
         </div>
@@ -373,36 +465,36 @@ const Contracts: React.FC = () => {
       </div>
 
       {/* Signature Area */}
-      <div className="mt-auto flex justify-between items-end gap-10">
-        <div className="text-center w-1/3 pb-10">
-          <p className="font-bold text-sm mb-16 uppercase text-slate-900">Kurum Yetkilisi</p>
-          <div className="border-t border-slate-300 pt-2">
-            <p className="text-[10px] uppercase font-bold text-slate-400 tracking-tighter">Kaşe / İmza</p>
+      <div className="mt-auto flex justify-between items-end gap-6">
+        <div className="text-center w-1/3 pb-4">
+          <p className="font-bold text-xs mb-10 uppercase text-slate-900">Kurum Yetkilisi</p>
+          <div className="border-t border-slate-300 pt-1">
+            <p className="text-[9px] uppercase font-bold text-slate-400 tracking-tighter">Kaşe / İmza</p>
           </div>
         </div>
 
-        <div className="w-[45%] border-2 border-pnr-purple/10 rounded-2xl p-6 bg-slate-50/50 relative overflow-hidden print:bg-slate-50">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-pnr-purple/5 rounded-full -mr-12 -mt-12"></div>
+        <div className="w-[45%] border-2 border-pnr-purple/10 rounded-xl p-4 bg-slate-50/50 relative overflow-hidden print:bg-slate-50">
+          <div className="absolute top-0 right-0 w-20 h-20 bg-pnr-purple/5 rounded-full -mr-10 -mt-10"></div>
 
-          <h4 className="font-bold text-sm mb-4 uppercase text-pnr-purple border-b border-pnr-purple/10 pb-2">VELİ BİLGİLERİ & ONAY</h4>
+          <h4 className="font-bold text-xs mb-2 uppercase text-pnr-purple border-b border-pnr-purple/10 pb-1">VELİ BİLGİLERİ & ONAY</h4>
 
-          <div className="space-y-3 text-xs mb-10 relative z-10">
-            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-1">
+          <div className="space-y-2 text-[11px] mb-6 relative z-10">
+            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-0.5">
               <span className="text-slate-500 font-medium">Ad Soyad:</span>
               <span className="font-bold text-slate-900 uppercase">{formData.parentName || '.......................'}</span>
             </div>
-            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-1">
+            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-0.5">
               <span className="text-slate-500 font-medium">TC Kimlik:</span>
               <span className="font-mono font-bold">{formData.parentTc || '.......................'}</span>
             </div>
-            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-1">
+            <div className="flex justify-between items-center border-b border-slate-200 border-dashed pb-0.5">
               <span className="text-slate-500 font-medium">Telefon:</span>
               <span className="font-mono font-bold">{formData.parentPhone || '.......................'}</span>
             </div>
           </div>
 
-          <div className="text-center pt-4 border-t-2 border-slate-200 border-dotted mt-4">
-            <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">İmza</p>
+          <div className="text-center pt-2 border-t-2 border-slate-200 border-dotted mt-2">
+            <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">İmza</p>
           </div>
         </div>
       </div>
@@ -570,7 +662,7 @@ const Contracts: React.FC = () => {
               <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-start gap-2">
                   <CheckCircle2 size={14} className="text-pnr-green shrink-0 mt-0.5" />
-                  <span>PDF olarak kaydetmek için açılan yazdır ekranında hedef yazıcıyı <strong>"PDF Olarak Kaydet"</strong> seçiniz.</span>
+                  <span>Sözleşme belgeniz <strong>"ÖğrenciAdı_Branş_Program Sözleşmesi.pdf"</strong> formatında otomatik olarak indirilecektir.</span>
                 </p>
               </div>
             </div>
