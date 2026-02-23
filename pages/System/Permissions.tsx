@@ -116,132 +116,42 @@ const Permissions: React.FC<PermissionsProps> = ({ currentUserRole }) => {
   // Toggle Handler
   const handleToggle = (resourceId: string, field: 'can_view' | 'can_edit') => {
     setPermissions(prev => {
-      const existingIndex = prev.findIndex(p => p.role === activeRole && p.resource_key === resourceId);
+      const updatedList = [...prev];
 
-      // We will construct the new record to be inserted/updated
-      let newRecord: PermissionRecord;
+      const updateOrAdd = (id: string, val: boolean) => {
+        const idx = updatedList.findIndex(p => p.role === activeRole && p.resource_key === id);
+        const record = idx > -1 ? { ...updatedList[idx] } : { role: activeRole, resource_key: id, can_view: false, can_edit: false };
 
-      if (existingIndex > -1) {
-        newRecord = { ...prev[existingIndex] };
-        newRecord[field] = !newRecord[field];
-      } else {
-        newRecord = {
-          role: activeRole,
-          resource_key: resourceId,
-          can_view: false,
-          can_edit: false,
-        };
-        newRecord[field] = true;
-      }
+        record[field] = val;
 
-      // Logic Rule: If can_edit is true, force can_view to true
-      if (field === 'can_edit' && newRecord.can_edit) {
-        newRecord.can_view = true;
-      }
-      // Logic Rule: If can_view is false, force can_edit to false
-      if (field === 'can_view' && !newRecord.can_view) {
-        newRecord.can_edit = false;
-      }
+        // Logical constraints
+        if (record.can_edit) record.can_view = true;
+        if (!record.can_view) record.can_view = false; // Ensure can_view is false if can_edit is false
+        if (!record.can_view) record.can_edit = false; // Ensure can_edit is false if can_view is false
 
-      // Logic: Update permissions
-      if (existingIndex > -1) {
-        const updated = [...prev];
-        updated[existingIndex] = newRecord;
+        if (idx > -1) updatedList[idx] = record;
+        else updatedList.push(record);
 
-        // NEW: If this resource has sub-items (is a parent), update all children too
-        const parentResource = resources.find(r => r.id === resourceId);
-        if (parentResource && parentResource.hasSubItems) {
-          // Find all children (next items in 'resources' list with higher level)
-          const parentIndex = resources.findIndex(r => r.id === resourceId);
-          if (parentIndex > -1) {
-            for (let i = parentIndex + 1; i < resources.length; i++) {
-              const child = resources[i];
-              // Stop if we reach a node with same or lower level (start of next section)
-              if (child.level <= parentResource.level) break;
+        return record;
+      };
 
-              // Update child permission
-              const childPermIndex = updated.findIndex(p => p.role === activeRole && p.resource_key === child.id);
-              let childRecord: PermissionRecord;
+      // 1. Update the parent
+      const parentPerm = updateOrAdd(resourceId, !getPermission(resourceId)[field]);
 
-              if (childPermIndex > -1) {
-                childRecord = { ...updated[childPermIndex] };
-              } else {
-                childRecord = {
-                  role: activeRole,
-                  resource_key: child.id,
-                  can_view: false,
-                  can_edit: false
-                };
-                updated.push(childRecord); // Note: pushing changes index logic if used carelessly, but map/find is safe
-              }
+      // 2. Cascade down to all descendants
+      const parentRes = resources.find(r => r.id === resourceId);
+      if (parentRes) {
+        // Find all descendants by checking levels in the flattened list
+        const parentIdx = resources.findIndex(r => r.id === resourceId);
+        for (let i = parentIdx + 1; i < resources.length; i++) {
+          const child = resources[i];
+          if (child.level <= parentRes.level) break; // End of branch
 
-              // Apply Parent's new state to Child
-              childRecord[field] = newRecord[field];
-
-              // Apply Logic Rules to Child
-              if (field === 'can_edit' && childRecord.can_edit) childRecord.can_view = true;
-              if (field === 'can_view' && !childRecord.can_view) childRecord.can_edit = false;
-
-              // Save back
-              if (childPermIndex > -1) updated[childPermIndex] = childRecord;
-              else {
-                // We might have pushed already if logic above was different.
-                // But here we need to be careful with array mutation.
-                // Safer approach: use findIndex again or map.
-                // However, for this simple logic:
-                // If not found, we pushed. If found, we updated.
-                // Wait, 'updated' is the array we are modifying.
-                // If childPermIndex was -1, we pushed 'childRecord' earlier? No, I defined `childRecord` but didnt push yet in `else`.
-                // Let's fix the `else` block above.
-              }
-            }
-
-            // Re-implementation for safety within the loop:
-            const updatedWithChildren = [...updated];
-            for (let i = parentIndex + 1; i < resources.length; i++) {
-              const child = resources[i];
-              if (child.level <= parentResource.level) break;
-
-              const idx = updatedWithChildren.findIndex(p => p.role === activeRole && p.resource_key === child.id);
-              let cRec = idx > -1 ? { ...updatedWithChildren[idx] } : { role: activeRole, resource_key: child.id, can_view: false, can_edit: false };
-
-              cRec[field] = newRecord[field];
-              if (field === 'can_edit' && cRec.can_edit) cRec.can_view = true;
-              if (field === 'can_view' && !cRec.can_view) cRec.can_edit = false;
-
-              if (idx > -1) updatedWithChildren[idx] = cRec;
-              else updatedWithChildren.push(cRec);
-            }
-            return updatedWithChildren;
-          }
+          updateOrAdd(child.id, parentPerm[field]);
         }
-
-        return updated;
-      } else {
-        // New record (First time toggle for this parent)
-        const newList = [...prev, newRecord];
-
-        // Similar Logic for Children
-        const parentResource = resources.find(r => r.id === resourceId);
-        if (parentResource && parentResource.hasSubItems) {
-          const parentIndex = resources.findIndex(r => r.id === resourceId);
-          for (let i = parentIndex + 1; i < resources.length; i++) {
-            const child = resources[i];
-            if (child.level <= parentResource.level) break;
-
-            const idx = newList.findIndex(p => p.role === activeRole && p.resource_key === child.id);
-            let cRec = idx > -1 ? { ...newList[idx] } : { role: activeRole, resource_key: child.id, can_view: false, can_edit: false };
-
-            cRec[field] = newRecord[field];
-            if (field === 'can_edit' && cRec.can_edit) cRec.can_view = true;
-            if (field === 'can_view' && !cRec.can_view) cRec.can_edit = false;
-
-            if (idx > -1) newList[idx] = cRec;
-            else newList.push(cRec);
-          }
-        }
-        return newList;
       }
+
+      return updatedList;
     });
   };
 

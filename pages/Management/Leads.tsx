@@ -49,9 +49,10 @@ interface SortConfig {
 
 interface LeadsProps {
   currentUserRole: UserRole;
+  canEdit?: boolean;
 }
 
-const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
+const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -146,6 +147,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
   };
 
   const handleStatusChange = async (id: string, newStatus: LeadStatus) => {
+    if (!canEdit) return;
     // Optimistic Update
     setLeads(leads.map(lead =>
       lead.id === id ? { ...lead, status: newStatus } : lead
@@ -172,7 +174,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
   };
 
   const handleFollowUpDateChange = async (id: string, newDate: string) => {
-    if (!newDate) return;
+    if (!canEdit || !newDate) return;
 
     // Optimistic Update with Functional State
     setLeads(prev => prev.map(lead =>
@@ -194,6 +196,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
 
   const handleEditClick = (e: React.MouseEvent, lead: Lead) => {
     e.stopPropagation();
+    if (!canEdit) return;
     setEditingLeadId(lead.id);
     setNewLead({
       studentName: lead.studentName,
@@ -225,7 +228,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
 
   const handleSaveLead = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLead.studentName || !newLead.phone) return;
+    if (!canEdit || !newLead.studentName || !newLead.phone) return;
     setLoading(true);
 
     try {
@@ -285,6 +288,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
 
   const handleDeleteLead = async (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation();
+    if (!canEdit) return;
     if (window.confirm(`${name} isimli talebi silmek istediğinize emin misiniz?`)) {
       setLoading(true);
       try {
@@ -325,6 +329,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
   };
 
   const handleAddNote = async (leadId: string) => {
+    if (!canEdit) return;
     const content = noteInputs[leadId];
     if (!content?.trim()) return;
 
@@ -548,13 +553,15 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
               </button>
             </div>
 
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px] flex-1 sm:flex-none"
-            >
-              <UserPlus size={18} />
-              <span className="whitespace-nowrap">Yeni Talep</span>
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px] flex-1 sm:flex-none"
+              >
+                <UserPlus size={18} />
+                <span className="whitespace-nowrap">Yeni Talep</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -600,12 +607,14 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                       className={`group hover:brightness-95 dark:hover:brightness-110 transition-all cursor-pointer ${getRowStatusColor(lead.status)} ${expandedRows.includes(lead.id) ? 'brightness-95 dark:brightness-110' : ''}`}
                     >
                       <td className="p-4 text-center">
-                        <button
-                          onClick={(e) => handleDeleteLead(e, lead.id, lead.studentName)}
-                          className="text-slate-400 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                        {canEdit && (
+                          <button
+                            onClick={(e) => handleDeleteLead(e, lead.id, lead.studentName)}
+                            className="text-slate-400 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        )}
                       </td>
                       <td className="p-4 text-slate-400 text-center">
                         {expandedRows.includes(lead.id) ? <ChevronDown size={20} className="mx-auto" /> : <ChevronRight size={20} className="mx-auto" />}
@@ -665,12 +674,14 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                         </select>
                       </td>
                       <td className="p-4 text-center">
-                        <button
-                          onClick={(e) => handleEditClick(e, lead)}
-                          className="text-slate-400 hover:text-pnr-purple p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                        >
-                          <Edit size={18} />
-                        </button>
+                        {canEdit && (
+                          <button
+                            onClick={(e) => handleEditClick(e, lead)}
+                            className="text-slate-400 hover:text-pnr-purple p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                          >
+                            <Edit size={18} />
+                          </button>
+                        )}
                       </td>
                     </tr>
 
@@ -718,22 +729,24 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole }) => {
                             </div>
 
                             {/* Add Note Input */}
-                            <div className="flex gap-3 md:pl-6">
-                              <input
-                                type="text"
-                                value={noteInputs[lead.id] || ''}
-                                onChange={(e) => setNoteInputs({ ...noteInputs, [lead.id]: e.target.value })}
-                                placeholder="Yeni not ekle..."
-                                className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none placeholder:text-slate-400"
-                                onKeyDown={(e) => e.key === 'Enter' && handleAddNote(lead.id)}
-                              />
-                              <button
-                                onClick={() => handleAddNote(lead.id)}
-                                className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 p-2.5 rounded-xl hover:opacity-90 transition-opacity"
-                              >
-                                <Send size={18} />
-                              </button>
-                            </div>
+                            {canEdit && (
+                              <div className="flex gap-3 md:pl-6">
+                                <input
+                                  type="text"
+                                  value={noteInputs[lead.id] || ''}
+                                  onChange={(e) => setNoteInputs({ ...noteInputs, [lead.id]: e.target.value })}
+                                  placeholder="Yeni not ekle..."
+                                  className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none placeholder:text-slate-400"
+                                  onKeyDown={(e) => e.key === 'Enter' && handleAddNote(lead.id)}
+                                />
+                                <button
+                                  onClick={() => handleAddNote(lead.id)}
+                                  className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 p-2.5 rounded-xl hover:opacity-90 transition-opacity"
+                                >
+                                  <Send size={18} />
+                                </button>
+                              </div>
+                            )}
 
                           </div>
                         </td>

@@ -73,7 +73,11 @@ const INITIAL_FORM: ContractFormData = {
   parentPhone: ''
 };
 
-const Contracts: React.FC = () => {
+interface ContractsProps {
+  canEdit?: boolean;
+}
+
+const Contracts: React.FC<ContractsProps> = ({ canEdit = true }) => {
   const [activeTab, setActiveTab] = useState<'generator' | 'settings'>('generator');
   const [settings, setSettings] = useState<ContractSettings>(DEFAULT_SETTINGS);
   const [formData, setFormData] = useState<ContractFormData>(INITIAL_FORM);
@@ -522,12 +526,14 @@ const Contracts: React.FC = () => {
           >
             <PenTool size={16} /> Sözleşme Oluştur
           </button>
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'settings' ? 'bg-white dark:bg-slate-700 shadow-sm text-pnr-purple' : 'text-slate-500 dark:text-slate-400'}`}
-          >
-            <Settings size={16} /> Şablon Ayarları
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'settings' ? 'bg-white dark:bg-slate-700 shadow-sm text-pnr-purple' : 'text-slate-500 dark:text-slate-400'}`}
+            >
+              <Settings size={16} /> Şablon Ayarları
+            </button>
+          )}
         </div>
       </div>
 

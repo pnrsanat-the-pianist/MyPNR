@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { 
-  CheckSquare, Clock, Send, Inbox, Plus, X, 
-  User, Calendar, MessageSquare, CheckCircle2, 
+import {
+  CheckSquare, Clock, Send, Inbox, Plus, X,
+  User, Calendar, MessageSquare, CheckCircle2,
   AlertCircle, ChevronRight, Search, Trash2, Filter, AlertTriangle
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
@@ -30,14 +30,18 @@ interface Profile {
   role: UserRole;
 }
 
-const Todo: React.FC = () => {
+interface TodoProps {
+  canEdit?: boolean;
+}
+
+const Todo: React.FC<TodoProps> = ({ canEdit = true }) => {
   const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing'>('incoming');
   const [tasks, setTasks] = useState<TodoTask[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  
+
   // Form State
   const [newTask, setNewTask] = useState({
     title: '',
@@ -82,7 +86,7 @@ const Todo: React.FC = () => {
         .select('id, name, role')
         .neq('id', user.id) // Don't assign to self (optional)
         .eq('status', 'active');
-      
+
       setProfiles(profileData || []);
 
       // 3. FETCH SYSTEM TASKS (Periods without scheduled lessons)
@@ -100,24 +104,24 @@ const Todo: React.FC = () => {
         .eq('status', 'active');
 
       if (!periodError && unscheduledPeriods) {
-          const systemTasks: TodoTask[] = unscheduledPeriods
-            .filter((p: any) => !p.instrument_attendance || p.instrument_attendance.length === 0)
-            .map((p: any) => ({
-                id: `system-${p.id}`,
-                title: `Ders Programı Oluşturulmalı: ${p.students?.full_name}`,
-                description: `${p.period_number}. Dönem (${new Date(p.start_date).toLocaleDateString('tr-TR')}) için ders kaydı bulunamadı. Lütfen "Enstrüman Dersleri" sayfasından planlama yapınız.`,
-                assigner_id: 'system',
-                assignee_id: user.id, // Assign to current user effectively so it shows in incoming
-                status: 'pending',
-                created_at: p.start_date, // Use period start as task date
-                completed_at: null,
-                assigner_name: 'Sistem Uyarısı',
-                assignee_name: 'Yönetim',
-                is_system: true
-            }));
-          
-          // Combine: System tasks first
-          allTasks = [...systemTasks, ...allTasks];
+        const systemTasks: TodoTask[] = unscheduledPeriods
+          .filter((p: any) => !p.instrument_attendance || p.instrument_attendance.length === 0)
+          .map((p: any) => ({
+            id: `system-${p.id}`,
+            title: `Ders Programı Oluşturulmalı: ${p.students?.full_name}`,
+            description: `${p.period_number}. Dönem (${new Date(p.start_date).toLocaleDateString('tr-TR')}) için ders kaydı bulunamadı. Lütfen "Enstrüman Dersleri" sayfasından planlama yapınız.`,
+            assigner_id: 'system',
+            assignee_id: user.id, // Assign to current user effectively so it shows in incoming
+            status: 'pending',
+            created_at: p.start_date, // Use period start as task date
+            completed_at: null,
+            assigner_name: 'Sistem Uyarısı',
+            assignee_name: 'Yönetim',
+            is_system: true
+          }));
+
+        // Combine: System tasks first
+        allTasks = [...systemTasks, ...allTasks];
       }
 
       setTasks(allTasks);
@@ -150,7 +154,7 @@ const Todo: React.FC = () => {
         });
 
       if (error) throw error;
-      
+
       setIsModalOpen(false);
       setNewTask({ title: '', description: '', assignee_id: '' });
       fetchData();
@@ -161,8 +165,8 @@ const Todo: React.FC = () => {
 
   const toggleTaskStatus = async (taskId: string, currentStatus: string, isSystem = false) => {
     if (isSystem) {
-        alert("Sistem görevleri manuel olarak kapatılamaz. İlgili öğrenciye ders programı atandığında bu görev otomatik olarak kalkacaktır.");
-        return;
+      alert("Sistem görevleri manuel olarak kapatılamaz. İlgili öğrenciye ders programı atandığında bu görev otomatik olarak kalkacaktır.");
+      return;
     }
 
     const newStatus = currentStatus === 'pending' ? 'completed' : 'pending';
@@ -176,7 +180,7 @@ const Todo: React.FC = () => {
         .from('todos')
         .update({ status: newStatus, completed_at: completedAt })
         .eq('id', taskId);
-      
+
       if (error) throw error;
     } catch (err: any) {
       console.error("Status update error:", err);
@@ -208,7 +212,7 @@ const Todo: React.FC = () => {
 
   return (
     <div className="p-4 md:p-6 max-w-[1200px] mx-auto space-y-6">
-      
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -217,17 +221,19 @@ const Todo: React.FC = () => {
             Akademi içi iş paylaşımı ve takip merkezi.
           </p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-pnr-purple hover:bg-pnr-indigo text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 transition-all"
-        >
-          <Plus size={20} /> Yeni Görev Aktar
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="bg-pnr-purple hover:bg-pnr-indigo text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 transition-all"
+          >
+            <Plus size={20} /> Yeni Görev Aktar
+          </button>
+        )}
       </div>
 
       {/* Tabs */}
       <div className="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl w-full sm:w-fit">
-        <button 
+        <button
           onClick={() => setActiveTab('incoming')}
           className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab === 'incoming' ? 'bg-white dark:bg-slate-700 text-pnr-purple shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}
         >
@@ -238,7 +244,7 @@ const Todo: React.FC = () => {
             </span>
           )}
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab('outgoing')}
           className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab === 'outgoing' ? 'bg-white dark:bg-slate-700 text-pnr-purple shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}
         >
@@ -258,27 +264,27 @@ const Todo: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 gap-4">
             {filteredTasks.map(task => (
-              <div 
-                key={task.id} 
+              <div
+                key={task.id}
                 className={`
                   bg-white dark:bg-pnr-card border transition-all rounded-2xl p-4 md:p-5 flex items-start gap-4 group
-                  ${task.is_system ? 'border-l-4 border-l-red-500 border-t border-r border-b border-slate-200 dark:border-slate-800' : 
+                  ${task.is_system ? 'border-l-4 border-l-red-500 border-t border-r border-b border-slate-200 dark:border-slate-800' :
                     task.status === 'completed' ? 'border-green-100 dark:border-green-900/30 opacity-75' : 'border-slate-200 dark:border-slate-800 hover:border-pnr-purple dark:hover:border-pnr-purple shadow-sm'}
                 `}
               >
                 {/* Status Toggle (Only for the Assignee) */}
-                <button 
-                  onClick={() => activeTab === 'incoming' && toggleTaskStatus(task.id, task.status, task.is_system)}
-                  disabled={activeTab === 'outgoing' || task.is_system}
+                <button
+                  onClick={() => canEdit && activeTab === 'incoming' && toggleTaskStatus(task.id, task.status, task.is_system)}
+                  disabled={!canEdit || activeTab === 'outgoing' || task.is_system}
                   className={`
                     w-7 h-7 rounded-lg border-2 flex items-center justify-center shrink-0 transition-all mt-1
-                    ${task.is_system 
-                        ? 'border-red-200 bg-red-50 text-red-500 cursor-not-allowed'
-                        : task.status === 'completed' 
-                            ? 'bg-pnr-green border-pnr-green text-white cursor-pointer' 
-                            : 'border-slate-300 dark:border-slate-600 text-transparent hover:border-pnr-purple cursor-pointer'
+                    ${task.is_system
+                      ? 'border-red-200 bg-red-50 text-red-500 cursor-not-allowed'
+                      : task.status === 'completed'
+                        ? 'bg-pnr-green border-pnr-green text-white cursor-pointer'
+                        : 'border-slate-300 dark:border-slate-600 text-transparent hover:border-pnr-purple cursor-pointer'
                     }
-                    ${activeTab === 'outgoing' ? 'cursor-default' : ''}
+                    ${!canEdit || activeTab === 'outgoing' ? 'cursor-default' : ''}
                   `}
                   title={task.is_system ? "Sistem uyarısı (Otomatik kapanır)" : "Tamamla"}
                 >
@@ -292,26 +298,26 @@ const Todo: React.FC = () => {
                     </h3>
                     <div className="flex items-center gap-2 shrink-0">
                       {task.is_system ? (
-                          <span className="text-[10px] uppercase font-bold text-red-500 flex items-center gap-1 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded-md border border-red-100 dark:border-red-800">
-                            <AlertCircle size={12}/> Sistem
-                          </span>
+                        <span className="text-[10px] uppercase font-bold text-red-500 flex items-center gap-1 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded-md border border-red-100 dark:border-red-800">
+                          <AlertCircle size={12} /> Sistem
+                        </span>
                       ) : task.status === 'completed' ? (
                         <span className="text-[10px] uppercase font-bold text-pnr-green flex items-center gap-1 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded-md border border-green-100 dark:border-green-800">
-                          <CheckCircle2 size={12}/> Tamamlandı
+                          <CheckCircle2 size={12} /> Tamamlandı
                         </span>
                       ) : (
                         <span className="text-[10px] uppercase font-bold text-amber-500 flex items-center gap-1 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded-md border border-amber-100 dark:border-amber-800">
-                          <Clock size={12}/> Beklemede
+                          <Clock size={12} /> Beklemede
                         </span>
                       )}
-                      {activeTab === 'outgoing' && !task.is_system && (
+                      {canEdit && activeTab === 'outgoing' && !task.is_system && (
                         <button onClick={() => deleteTask(task.id)} className="text-slate-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Trash2 size={16} />
                         </button>
                       )}
                     </div>
                   </div>
-                  
+
                   <p className={`text-sm mt-1 mb-4 ${task.status === 'completed' ? 'text-slate-400' : 'text-slate-600 dark:text-slate-300'}`}>
                     {task.description}
                   </p>
@@ -337,12 +343,12 @@ const Todo: React.FC = () => {
                       </div>
                     )}
                     {task.is_system && (
-                        <button 
-                            onClick={() => window.location.hash = '/education/instrument-lessons'}
-                            className="ml-auto text-xs text-pnr-purple hover:underline font-bold"
-                        >
-                            Yönet
-                        </button>
+                      <button
+                        onClick={() => window.location.hash = '/education/instrument-lessons'}
+                        className="ml-auto text-xs text-pnr-purple hover:underline font-bold"
+                      >
+                        Yönet
+                      </button>
                     )}
                   </div>
                 </div>
@@ -353,7 +359,7 @@ const Todo: React.FC = () => {
       </div>
 
       {/* CREATE TASK MODAL */}
-      {isModalOpen && (
+      {isModalOpen && canEdit && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white dark:bg-pnr-card w-full max-w-lg rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
             <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
@@ -368,11 +374,11 @@ const Todo: React.FC = () => {
             <form onSubmit={handleCreateTask} className="p-6 space-y-5">
               <div>
                 <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-2">Kime Aktarılsın? *</label>
-                <select 
+                <select
                   required
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
                   value={newTask.assignee_id}
-                  onChange={(e) => setNewTask({...newTask, assignee_id: e.target.value})}
+                  onChange={(e) => setNewTask({ ...newTask, assignee_id: e.target.value })}
                 >
                   <option value="">Bir personel seçin...</option>
                   {profiles.map(p => (
@@ -383,28 +389,28 @@ const Todo: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-2">Görev Başlığı *</label>
-                <input 
+                <input
                   type="text" required
                   placeholder="Yapılacak işin başlığı..."
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
                   value={newTask.title}
-                  onChange={(e) => setNewTask({...newTask, title: e.target.value})}
+                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-2">Detaylar / Notlar</label>
-                <textarea 
+                <textarea
                   rows={4}
                   placeholder="İşin detaylarını buraya yazabilirsiniz..."
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none resize-none"
                   value={newTask.description}
-                  onChange={(e) => setNewTask({...newTask, description: e.target.value})}
+                  onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
                 ></textarea>
               </div>
 
               <div className="pt-2">
-                <button 
+                <button
                   type="submit"
                   className="w-full bg-gradient-to-r from-pnr-purple to-pnr-indigo text-white font-bold py-4 rounded-xl shadow-lg shadow-pnr-purple/25 flex items-center justify-center gap-2 hover:opacity-95 transition-all"
                 >

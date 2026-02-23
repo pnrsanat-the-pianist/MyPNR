@@ -39,7 +39,11 @@ interface BranchData {
   subBranches: { id: string; name: string }[];
 }
 
-const Teachers: React.FC = () => {
+interface TeachersProps {
+  canEdit?: boolean;
+}
+
+const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [availableBranches, setAvailableBranches] = useState<BranchData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -531,13 +535,15 @@ const Teachers: React.FC = () => {
             </button>
           </div>
 
-          <button
-            onClick={handleOpenNew}
-            className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px]"
-          >
-            <UserPlus size={18} />
-            Yeni Öğretmen
-          </button>
+          {canEdit && (
+            <button
+              onClick={handleOpenNew}
+              className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px]"
+            >
+              <UserPlus size={18} />
+              Yeni Öğretmen
+            </button>
+          )}
         </div>
       </div>
 
@@ -613,13 +619,15 @@ const Teachers: React.FC = () => {
                           </span>
                         </td>
                         <td className="p-4 text-center">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleEdit(teacher); }}
-                            className="text-slate-400 hover:text-pnr-purple transition-colors p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
-                            title="Düzenle"
-                          >
-                            <Edit size={18} />
-                          </button>
+                          {canEdit && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleEdit(teacher); }}
+                              className="text-slate-400 hover:text-pnr-purple transition-colors p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
+                              title="Düzenle"
+                            >
+                              <Edit size={18} />
+                            </button>
+                          )}
                         </td>
                       </tr>
 
@@ -765,13 +773,15 @@ const Teachers: React.FC = () => {
 
                     {expandedRows.includes(teacher.id) && (
                       <div className="mt-4 pt-4 border-t-2 border-slate-100 dark:border-slate-800 space-y-5 animate-in slide-in-from-top-2 duration-200">
-                        <button
-                          onClick={() => handleEdit(teacher)}
-                          className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-3 rounded-xl font-bold text-base shadow-md flex items-center justify-center gap-2 hover:bg-pnr-purple dark:hover:bg-pnr-purple hover:text-white transition-all active:scale-95"
-                        >
-                          <Edit size={20} />
-                          Profili Düzenle
-                        </button>
+                        {canEdit && (
+                          <button
+                            onClick={() => handleEdit(teacher)}
+                            className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-3 rounded-xl font-bold text-base shadow-md flex items-center justify-center gap-2 hover:bg-pnr-purple dark:hover:bg-pnr-purple hover:text-white transition-all active:scale-95"
+                          >
+                            <Edit size={20} />
+                            Profili Düzenle
+                          </button>
+                        )}
 
                         <div className="grid grid-cols-1 gap-4 text-base">
                           <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">

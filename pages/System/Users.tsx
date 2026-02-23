@@ -24,7 +24,11 @@ interface SortConfig {
   direction: 'asc' | 'desc';
 }
 
-const Users: React.FC = () => {
+interface UsersProps {
+  canEdit?: boolean;
+}
+
+const Users: React.FC<UsersProps> = ({ canEdit = true }) => {
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -274,13 +278,15 @@ const Users: React.FC = () => {
               </button>
             </div>
 
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px] flex-1 sm:flex-none"
-            >
-              <UserPlus size={18} />
-              <span className="whitespace-nowrap">Yeni Kullanıcı</span>
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="bg-pnr-purple hover:bg-pnr-indigo text-white px-4 py-2 rounded-xl font-medium transition-colors shadow-lg shadow-pnr-purple/20 flex items-center justify-center gap-2 h-[42px] flex-1 sm:flex-none"
+              >
+                <UserPlus size={18} />
+                <span className="whitespace-nowrap">Yeni Kullanıcı</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -372,13 +378,12 @@ const Users: React.FC = () => {
                         <div className="flex flex-col items-center justify-center gap-1">
                           <button
                             type="button"
-                            onClick={() => toggleStatus(user.id, user.status)}
-                            className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-pnr-purple ${user.status === 'passive' ? 'bg-slate-300 dark:bg-slate-600' : 'bg-pnr-green'
-                              }`}
+                            onClick={() => canEdit && toggleStatus(user.id, user.status)}
+                            className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-pnr-purple ${user.status === 'passive' ? 'bg-slate-300 dark:bg-slate-600' : 'bg-pnr-green'} ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            disabled={!canEdit}
                           >
                             <span
-                              className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform duration-200 shadow-sm ${user.status === 'passive' ? 'translate-x-1' : 'translate-x-6'
-                                }`}
+                              className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform duration-200 shadow-sm ${user.status === 'passive' ? 'translate-x-1' : 'translate-x-6'}`}
                             />
                           </button>
                           <span className="text-[10px] uppercase font-bold text-slate-400">
@@ -387,13 +392,15 @@ const Users: React.FC = () => {
                         </div>
                       </td>
                       <td className="p-4 text-center">
-                        <button
-                          onClick={() => handleDeleteUser(user.id)}
-                          className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
-                          title="Kullanıcıyı Sil"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                        {canEdit && (
+                          <button
+                            onClick={() => handleDeleteUser(user.id)}
+                            className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
+                            title="Kullanıcıyı Sil"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))

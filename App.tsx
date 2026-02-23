@@ -210,50 +210,49 @@ const App: React.FC = () => {
       case '/management/branches':
         return renderProtectedPage('branslar', (canEdit) => <Branches canEdit={canEdit} />);
       case '/management/teachers':
-        return renderProtectedPage('ogretmenler', (canEdit) => <Teachers />);
+        return renderProtectedPage('ogretmenler', (canEdit) => <Teachers canEdit={canEdit} />);
       case '/management/contracts':
-        return renderProtectedPage('sozlesmeler', (canEdit) => <Contracts />);
+        return renderProtectedPage('sozlesmeler', (canEdit) => <Contracts canEdit={canEdit} />);
       case '/management/todo':
-        return renderProtectedPage('todo', (canEdit) => <Todo />);
+        return renderProtectedPage('todo', (canEdit) => <Todo canEdit={canEdit} />);
 
       // Education
       case '/education/crm':
         return renderProtectedPage('crm', (canEdit) => <CRM canEdit={canEdit} />);
       case '/management/leads':
-        return renderProtectedPage('yeni-talep', (canEdit) => <Leads currentUserRole={userRole} />);
+        return renderProtectedPage('yeni-talep', (canEdit) => <Leads currentUserRole={userRole} canEdit={canEdit} />);
       case '/education/dance-classes':
-        return renderProtectedPage('bale-siniflari', (canEdit) => <DanceClasses />);
+        return renderProtectedPage('bale-siniflari', (canEdit) => <DanceClasses canEdit={canEdit} />);
       case '/education/instrument-lessons':
-        // Special case: Attendance passes currentUserRole inside, but we can also pass canEdit
         return renderProtectedPage('enstruman-dersleri', (canEdit) => <InstrumentLessons currentUserRole={userRole} canEdit={canEdit} />);
       case '/education/schedule':
-        return renderProtectedPage('ders-programi', (canEdit) => <Schedule />);
+        return renderProtectedPage('ders-programi', (canEdit) => <Schedule canEdit={canEdit} />);
 
       // Finance
       case '/finance/categories':
-        return renderProtectedPage('gelir-gider', (canEdit) => <FinanceCategories />);
+        return renderProtectedPage('gelir-gider', (canEdit) => <FinanceCategories canEdit={canEdit} />);
       case '/finance/cashbook':
-        return renderProtectedPage('kasa', (canEdit) => <CashBook />);
+        return renderProtectedPage('kasa', (canEdit) => <CashBook canEdit={canEdit} />);
       case '/finance/denizbank':
-        return renderProtectedPage('denizbank', (canEdit) => <Denizbank />);
+        return renderProtectedPage('denizbank', (canEdit) => <Denizbank canEdit={canEdit} />);
       case '/finance/denizbank-pos':
-        return renderProtectedPage('denizbank-pos', (canEdit) => <DenizbankPOS />);
+        return renderProtectedPage('denizbank-pos', (canEdit) => <DenizbankPOS canEdit={canEdit} />);
       case '/finance/vakifbank':
-        return renderProtectedPage('vakifbank', (canEdit) => <Vakifbank />);
+        return renderProtectedPage('vakifbank', (canEdit) => <Vakifbank canEdit={canEdit} />);
       case '/finance/profitability':
-        return renderProtectedPage('karlilik', (canEdit) => <Profitability />);
+        return renderProtectedPage('karlilik', (canEdit) => <Profitability canEdit={canEdit} />);
       case '/finance/salaries':
-        return renderProtectedPage('maas', (canEdit) => <Salaries />);
+        return renderProtectedPage('maas', (canEdit) => <Salaries canEdit={canEdit} />);
       case '/finance/banks':
-        return renderProtectedPage('denizbank', (canEdit) => <Banks />); // Reusing generic bank permission or specific
+        return renderProtectedPage('bankalar', (canEdit) => <Banks canEdit={canEdit} />);
 
       // System
       case '/system/users':
-        return renderProtectedPage('kullanicilar', (canEdit) => <Users />);
+        return renderProtectedPage('kullanicilar', (canEdit) => <Users canEdit={canEdit} />);
       case '/system/permissions':
         return renderProtectedPage('yetkiler', (canEdit) => <Permissions currentUserRole={userRole} />);
       case '/system/settings':
-        return renderProtectedPage('ayarlar', (canEdit) => <Settings />);
+        return renderProtectedPage('ayarlar', (canEdit) => <Settings canEdit={canEdit} />);
 
       default:
         return <Dashboard currentUserRole={userRole} />;
