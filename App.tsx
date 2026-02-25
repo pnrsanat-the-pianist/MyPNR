@@ -297,8 +297,11 @@ const App: React.FC = () => {
               <Menu size={24} />
             </button>
             <div className="md:hidden flex items-center gap-2">
-              <Disc className="text-pnr-purple" size={24} />
-              <span className="font-display font-bold text-slate-900 dark:text-white">MyPNR</span>
+              <img
+                src="https://zzovahjrrjmpoztruezp.supabase.co/storage/v1/object/public/institution-assets/MyPNR%20Logo%20(Seffaf%20Fon)2.png"
+                alt="MyPNR Logo"
+                className="h-8 object-contain"
+              />
             </div>
           </div>
 

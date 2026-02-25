@@ -201,19 +201,13 @@ const Sidebar: React.FC<SidebarProps> = ({ userRole, userName, isOpen, toggleSid
       `}
     >
       {/* Logo Area */}
-      <div className="h-16 md:h-20 flex items-center px-6 border-b border-slate-200 dark:border-slate-800 relative shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="relative w-9 h-9 flex items-center justify-center">
-            <Disc className="w-9 h-9 text-pnr-purple absolute animate-pulse" />
-            <div className="w-5 h-5 rounded-full border-2 border-pnr-yellow absolute"></div>
-            <div className="w-2 h-2 rounded-full bg-pnr-red absolute"></div>
-          </div>
-          {(isOpen || window.innerWidth < 768) && (
-            <div className={`flex flex-col transition-opacity duration-300 ${!isOpen && 'md:opacity-0'}`}>
-              <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white leading-none">MyPNR</span>
-              <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 font-sans mt-0.5">Akademi</span>
-            </div>
-          )}
+      <div className="h-24 md:h-28 flex items-center justify-center px-4 border-b border-slate-200 dark:border-slate-800 relative shrink-0">
+        <div className="flex items-center justify-center w-full overflow-hidden">
+          <img
+            src="https://zzovahjrrjmpoztruezp.supabase.co/storage/v1/object/public/institution-assets/MyPNR%20Logo%20(Seffaf%20Fon)2.png"
+            alt="MyPNR Logo"
+            className={`transition-all duration-300 object-contain ${isOpen ? 'h-20 md:h-24' : 'h-10 w-10'}`}
+          />
         </div>
 
         {/* Mobile Close Button */}

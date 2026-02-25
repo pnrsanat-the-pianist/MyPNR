@@ -283,7 +283,7 @@ const AdminDashboard: React.FC = () => {
                         <div className="absolute top-0 right-0 w-48 h-48 bg-pnr-purple/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
                         <div className="flex items-center justify-between mb-4 relative z-10">
                             <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display">Öğrenci Dağılımı</h2>
-                            <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                            <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="CRM Sayfasına Git">
                                 <ArrowRight size={18} />
                             </button>
                         </div>
@@ -307,7 +307,7 @@ const AdminDashboard: React.FC = () => {
                     <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm dark:shadow-none flex flex-col h-[380px]">
                         <div className="flex items-center justify-between mb-4 relative z-10">
                             <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display">Öğretmen Dağılımı</h2>
-                            <button onClick={() => navigateTo('/management/teachers')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                            <button onClick={() => navigateTo('/management/teachers')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Öğretmenler Sayfasına Git">
                                 <ArrowRight size={18} />
                             </button>
                         </div>
@@ -379,7 +379,11 @@ const AdminDashboard: React.FC = () => {
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <UserPlus className="text-pnr-purple" size={20} /> Yeni Talepler
                                 </h2>
-                                <button onClick={() => navigateTo('/education/leads')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                                <button
+                                    onClick={() => navigateTo('/management/leads')}
+                                    className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                    title="Yeni Talepler Sayfasına Git"
+                                >
                                     <ArrowRight size={18} />
                                 </button>
                             </div>
@@ -421,7 +425,7 @@ const AdminDashboard: React.FC = () => {
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <Wallet className="text-pnr-green" size={20} /> Finansal Durum
                                 </h2>
-                                <button onClick={() => navigateTo('/finance/profitability')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                                <button onClick={() => navigateTo('/finance/profitability')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Finans Sayfasına Git">
                                     <ArrowRight size={18} />
                                 </button>
                             </div>
@@ -456,7 +460,7 @@ const AdminDashboard: React.FC = () => {
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <Calendar className="text-pnr-orange" size={20} /> Günlük Program
                                 </h2>
-                                <button onClick={() => navigateTo('/education/schedule')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                                <button onClick={() => navigateTo('/education/schedule')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Program Sayfasına Git">
                                     <ArrowRight size={18} />
                                 </button>
                             </div>
@@ -493,7 +497,7 @@ const AdminDashboard: React.FC = () => {
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <Users className="text-pnr-cyan" size={20} /> Son Kayıtlar
                                 </h2>
-                                <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                                <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Öğrenci Listesine Git">
                                     <ArrowRight size={18} />
                                 </button>
                             </div>
