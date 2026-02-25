@@ -294,9 +294,6 @@ const AdminDashboard: React.FC = () => {
                             ) : chartData.length > 0 ? (
                                 <div className="w-full h-full flex flex-col justify-center">
                                     <StudentDistributionChart data={chartData} />
-                                    <div className="text-center text-xs text-slate-400 mt-4 px-4">
-                                        En yoğun branş <span style={{ color: chartData[0]?.color }} className="font-bold">{chartData[0].name}</span>, toplamın %{((chartData[0].count / chartData.reduce((a, b) => a + b.count, 0)) * 100).toFixed(0)}'ini oluşturuyor.
-                                    </div>
                                 </div>
                             ) : (
                                 <div className="flex flex-col items-center gap-2 text-slate-400">
