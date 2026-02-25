@@ -49,12 +49,27 @@ const TeacherPerformanceChart: React.FC<Props> = ({ data }) => {
                     <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f1f5f9', opacity: 0.4 }} />
                     <Bar
                         dataKey="studentCount"
-                        fill="#3b82f6"
                         radius={[0, 4, 4, 0]}
                         barSize={16}
                     >
-                        {sortedData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={index < 3 ? '#8b5cf6' : '#94a3b8'} />
+                        {sortedData.map((_entry, index) => (
+                            <Cell
+                                key={`cell-${index}`}
+                                fill={
+                                    [
+                                        '#8b5cf6', // purple
+                                        '#3b82f6', // blue
+                                        '#f97316', // orange
+                                        '#10b981', // green
+                                        '#06b6d4', // cyan
+                                        '#eab308', // yellow
+                                        '#ef4444', // red
+                                        '#ec4899', // pink
+                                        '#6366f1', // indigo
+                                        '#14b8a6'  // teal
+                                    ][index % 10]
+                                }
+                            />
                         ))}
                         <LabelList dataKey="studentCount" position="right" fontSize={11} fill="#64748b" />
                     </Bar>

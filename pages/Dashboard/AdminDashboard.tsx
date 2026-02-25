@@ -12,6 +12,7 @@ interface TodoItem {
     title: string;
     description?: string;
     status: 'pending' | 'completed';
+    is_priority: boolean;
     created_at: string;
 }
 
@@ -92,8 +93,9 @@ const AdminDashboard: React.FC = () => {
                     .select('*')
                     .eq('assignee_id', user.id)
                     .eq('status', 'pending')
+                    .order('is_priority', { ascending: false })
                     .order('created_at', { ascending: false })
-                    .limit(5);
+                    .limit(6); // Increased limit as it's now higher up
                 if (tData) setTodos(tData);
             }
 
@@ -125,11 +127,11 @@ const AdminDashboard: React.FC = () => {
             const { data: instAttendance } = await supabase
                 .from('instrument_attendance')
                 .select(`
-            id, time, 
-            instrument_periods (
-                students ( full_name, sub_branch )
-            )
-        `)
+                    id, time, 
+                    instrument_periods (
+                        students ( full_name, sub_branch )
+                    )
+                `)
                 .eq('date', todayStr)
                 .neq('status', 'absent');
 
@@ -173,7 +175,6 @@ const AdminDashboard: React.FC = () => {
                     else if (s === 'Deneme') stats.deneme++;
                     else if (s === 'Kayıt') stats.kayit++;
                     else if (s === 'İptal') stats.iptal++;
-                    // Robust check for "Görüşüldü"
                     else if (/^g[oö]r[uü][sş][uü]ld[uü]/i.test(s) || s.toLowerCase().includes('gorus') || s.toLowerCase().includes('görüş')) {
                         stats.gorusuldu++;
                     }
@@ -199,7 +200,7 @@ const AdminDashboard: React.FC = () => {
                 })).sort((a, b) => b.count - a.count);
                 setChartData(cData);
 
-                const recent: Student[] = students.slice(0, 3).map(s => ({
+                const recent: Student[] = students.slice(0, 4).map(s => ({
                     id: s.id,
                     name: s.full_name,
                     branch: s.sub_branch || s.main_branch || 'Belirsiz',
@@ -220,7 +221,7 @@ const AdminDashboard: React.FC = () => {
                     id: `teacher-${index}`,
                     name: key,
                     studentCount: teacherMap[key]
-                }));
+                })).sort((a, b) => b.studentCount - a.studentCount).slice(0, 10);
                 setTeacherStats(tStats);
             }
 
@@ -272,22 +273,20 @@ const AdminDashboard: React.FC = () => {
             </div>
 
             {/* --- MAIN GRID LAYOUT --- */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
-                {/* LEFT: BRANCH DISTRIBUTION & TEACHER PERFORMANCE (Span 4) */}
+                {/* --- LEFT COLUMN: CHARTS (Span 4) --- */}
                 <div className="lg:col-span-4 flex flex-col gap-6">
 
-                    {/* 1. BRANCH DISTRIBUTION CHART */}
+                    {/* 1. ÖĞRENCİ DAĞILIMI (Requested 1st) */}
                     <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm dark:shadow-none flex flex-col min-h-[400px]">
                         <div className="absolute top-0 right-0 w-48 h-48 bg-pnr-purple/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
-
                         <div className="flex items-center justify-between mb-4 relative z-10">
                             <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display">Öğrenci Dağılımı</h2>
                             <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                                 <ArrowRight size={18} />
                             </button>
                         </div>
-
                         <div className="flex-1 flex items-center justify-center relative z-10">
                             {loading ? (
                                 <div className="text-slate-400">Yükleniyor...</div>
@@ -304,245 +303,230 @@ const AdminDashboard: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* 2. TEACHER PERFORMANCE CHART (NEW) */}
-                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm dark:shadow-none flex flex-col">
+                    {/* 5. ÖĞRETMEN DAĞILIMI (Requested 5th) */}
+                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm dark:shadow-none flex flex-col h-[380px]">
                         <div className="flex items-center justify-between mb-4 relative z-10">
                             <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display">Öğretmen Dağılımı</h2>
                             <button onClick={() => navigateTo('/management/teachers')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                                 <ArrowRight size={18} />
                             </button>
                         </div>
-                        <div className="w-full">
+                        <div className="flex-1 w-full overflow-hidden">
                             {loading ? (
-                                <div className="text-center text-slate-400 py-8">Yükleniyor...</div>
+                                <div className="text-center text-slate-400 py-8 italic">Yükleniyor...</div>
                             ) : teacherStats.length > 0 ? (
                                 <TeacherPerformanceChart data={teacherStats} />
                             ) : (
-                                <div className="text-center text-slate-400 py-8">Veri yok</div>
+                                <div className="text-center text-slate-400 py-8 italic">Veri yok</div>
                             )}
                         </div>
                     </div>
 
                 </div>
 
-                {/* RIGHT: 2x2 GRID (Span 8) */}
-                <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* --- RIGHT COLUMN: LISTS & STATS (Span 8) --- */}
+                <div className="lg:col-span-8 flex flex-col gap-6">
 
-                    {/* 1. YENİ TALEPLER */}
-                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col">
+                    {/* 2. TO-DO LIST (Requested 2nd) */}
+                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm dark:shadow-none">
                         <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
-                                <UserPlus className="text-pnr-purple" size={20} /> Yeni Talepler
+                            <h2 className="text-xl font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                                <CheckSquare size={22} className="text-pnr-purple" />
+                                Görevlerim (To-Do)
                             </h2>
-                            <button onClick={() => navigateTo('/education/leads')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
-                                <ArrowRight size={18} />
+                            <button onClick={() => navigateTo('/management/todo')} className="flex items-center gap-1 text-sm font-bold text-pnr-purple hover:underline bg-pnr-purple/5 px-3 py-1.5 rounded-lg transition-all">
+                                Tümünü Gör <ArrowRight size={16} />
                             </button>
                         </div>
-                        <div className="grid grid-cols-2 gap-3 flex-1 content-center">
-                            <div className="bg-yellow-50 dark:bg-yellow-900/10 p-3 rounded-xl flex items-center justify-between border border-yellow-100 dark:border-yellow-900/30">
-                                <div>
-                                    <div className="text-[10px] uppercase font-bold text-yellow-600 dark:text-yellow-500">Takip</div>
-                                    <div className="text-xl font-bold text-yellow-700 dark:text-yellow-400">{leadStats.takip}</div>
-                                </div>
-                                <Clock size={18} className="text-yellow-400 opacity-60" />
-                            </div>
-                            <div className="bg-blue-50 dark:bg-blue-900/10 p-3 rounded-xl flex items-center justify-between border border-blue-100 dark:border-blue-900/30">
-                                <div>
-                                    <div className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-500">Deneme</div>
-                                    <div className="text-xl font-bold text-blue-700 dark:text-blue-400">{leadStats.deneme}</div>
-                                </div>
-                                <MessageSquare size={18} className="text-blue-400 opacity-60" />
-                            </div>
-                            <div className="bg-green-50 dark:bg-green-900/10 p-3 rounded-xl flex items-center justify-between border border-green-100 dark:border-green-900/30">
-                                <div>
-                                    <div className="text-[10px] uppercase font-bold text-green-600 dark:text-green-500">Kayıt</div>
-                                    <div className="text-xl font-bold text-green-700 dark:text-green-400">{leadStats.kayit}</div>
-                                </div>
-                                <CheckCircle2 size={18} className="text-green-400 opacity-60" />
-                            </div>
-                            <div className="bg-orange-50 dark:bg-orange-900/10 p-3 rounded-xl flex items-center justify-between border border-orange-100 dark:border-orange-900/30">
-                                <div>
-                                    <div className="text-[10px] uppercase font-bold text-orange-600 dark:text-orange-500">Görüşüldü</div>
-                                    <div className="text-xl font-bold text-orange-700 dark:text-orange-400">{leadStats.gorusuldu}</div>
-                                </div>
-                                <MessageSquare size={18} className="text-orange-400 opacity-60" />
-                            </div>
-                        </div>
-                    </div>
 
-                    {/* 2. SON KAYITLAR */}
-                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
-                                <Users className="text-pnr-cyan" size={20} /> Son Kayıtlar
-                            </h2>
-                            <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
-                                <ArrowRight size={18} />
-                            </button>
-                        </div>
-                        <div className="flex-1 space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {loading ? (
-                                <div className="text-center text-xs text-slate-400 py-4">Yükleniyor...</div>
-                            ) : recentStudents.length > 0 ? (
-                                recentStudents.map(student => (
-                                    <div key={student.id} className="flex items-center gap-3 p-2 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${getBranchAvatarStyle(student.branch)}`}>
-                                            {student.name.charAt(0)}
-                                        </div>
+                                <div className="text-center text-slate-400 py-4 col-span-full italic">Yükleniyor...</div>
+                            ) : todos.length > 0 ? (
+                                todos.map((task) => (
+                                    <div key={task.id} className="group flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 hover:border-pnr-purple dark:hover:border-pnr-purple transition-all">
+                                        <button
+                                            onClick={() => handleCompleteTodo(task.id)}
+                                            className="mt-0.5 w-5 h-5 rounded-md border-2 border-slate-300 dark:border-slate-600 hover:border-pnr-purple hover:bg-pnr-purple text-transparent hover:text-white flex items-center justify-center transition-all shrink-0"
+                                        >
+                                            <CheckCircle2 size={14} />
+                                        </button>
                                         <div className="flex-1 min-w-0">
-                                            <div className="font-bold text-slate-900 dark:text-white text-xs truncate">{student.name}</div>
-                                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{student.branch}</div>
-                                        </div>
-                                        <div className="text-[10px] text-slate-400 whitespace-nowrap">{student.nextLesson}</div>
-                                    </div>
-                                ))
-                            ) : <div className="text-center text-xs text-slate-400">Kayıt yok.</div>}
-                        </div>
-                        <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-xs">
-                            <span className="text-slate-500">Pasifler (Bu Ay):</span>
-                            <span className="font-bold text-red-500">{passiveThisMonth}</span>
-                        </div>
-                    </div>
-
-                    {/* 3. GÜNLÜK TAKVİM */}
-                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
-                                <Calendar className="text-pnr-orange" size={20} /> Günlük Program
-                            </h2>
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 px-2 py-1 rounded">Bugün</span>
-                                <button onClick={() => navigateTo('/education/schedule')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
-                                    <ArrowRight size={18} />
-                                </button>
-                            </div>
-                        </div>
-                        <div className="flex-1 overflow-y-auto max-h-[180px] custom-scrollbar pr-2 space-y-2">
-                            {loading ? (
-                                <div className="text-center text-xs text-slate-400 py-4">Yükleniyor...</div>
-                            ) : todaysLessons.length > 0 ? (
-                                todaysLessons.map(lesson => (
-                                    <div key={lesson.id} className="flex items-center gap-3 p-2 rounded-lg border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                        <div className="text-center w-10 shrink-0">
-                                            <div className="text-xs font-bold text-slate-800 dark:text-white">{lesson.time}</div>
-                                        </div>
-                                        <div className="w-1 h-8 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0"></div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-bold text-slate-800 dark:text-white text-xs truncate">{lesson.title}</div>
-                                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1">
-                                                <div className={`w-1.5 h-1.5 rounded-full ${lesson.type === 'group' ? 'bg-pnr-purple' : 'bg-pnr-blue'}`}></div>
-                                                {lesson.subTitle}
+                                            <p className="text-sm font-bold text-slate-800 dark:text-white leading-tight mb-0.5 truncate">{task.title}</p>
+                                            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                                                <Clock size={10} />
+                                                <span>{new Date(task.created_at).toLocaleDateString('tr-TR')}</span>
+                                                {(task as any).is_priority && <span className="text-amber-500 font-bold uppercase">❗ Öncelikli</span>}
                                             </div>
                                         </div>
                                     </div>
                                 ))
                             ) : (
-                                <div className="text-center py-8 text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
-                                    Bugün için planlanmış ders yok.
+                                <div className="text-center py-6 flex flex-col items-center gap-2 col-span-full">
+                                    <CheckCircle2 size={24} className="text-green-500 opacity-50 mb-1" />
+                                    <p className="text-sm font-medium text-slate-500 italic">Bekleyen görev yok.</p>
                                 </div>
                             )}
                         </div>
                     </div>
 
-                    {/* 4. AYLIK GELİR DURUMU */}
-                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col justify-between">
-                        <div className="flex items-center justify-between mb-2">
-                            <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
-                                <Wallet className="text-pnr-green" size={20} /> Finansal Durum
-                            </h2>
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs text-slate-400">Bu Ay (Kasa)</span>
+                    {/* --- 2x2 GRID FOR OTHER STATS --- */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                        {/* 3. YENİ TALEPLER (Requested 3rd) */}
+                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                                    <UserPlus className="text-pnr-purple" size={20} /> Yeni Talepler
+                                </h2>
+                                <button onClick={() => navigateTo('/education/leads')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                                    <ArrowRight size={18} />
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 flex-1 content-center">
+                                <div className="bg-yellow-50 dark:bg-yellow-900/10 p-3 rounded-xl flex items-center justify-between border border-yellow-100 dark:border-yellow-900/30">
+                                    <div>
+                                        <div className="text-[10px] uppercase font-bold text-yellow-600 dark:text-yellow-500">Takip</div>
+                                        <div className="text-xl font-bold text-yellow-700 dark:text-yellow-400">{leadStats.takip}</div>
+                                    </div>
+                                    <Clock size={18} className="text-yellow-400 opacity-60" />
+                                </div>
+                                <div className="bg-blue-50 dark:bg-blue-900/10 p-3 rounded-xl flex items-center justify-between border border-blue-100 dark:border-blue-900/30">
+                                    <div>
+                                        <div className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-500">Deneme</div>
+                                        <div className="text-xl font-bold text-blue-700 dark:text-blue-400">{leadStats.deneme}</div>
+                                    </div>
+                                    <MessageSquare size={18} className="text-blue-400 opacity-60" />
+                                </div>
+                                <div className="bg-green-50 dark:bg-green-900/10 p-3 rounded-xl flex items-center justify-between border border-green-100 dark:border-green-900/30">
+                                    <div>
+                                        <div className="text-[10px] uppercase font-bold text-green-600 dark:text-green-500">Kayıt</div>
+                                        <div className="text-xl font-bold text-green-700 dark:text-green-400">{leadStats.kayit}</div>
+                                    </div>
+                                    <CheckCircle2 size={18} className="text-green-400 opacity-60" />
+                                </div>
+                                <div className="bg-orange-50 dark:bg-orange-900/10 p-3 rounded-xl flex items-center justify-between border border-orange-100 dark:border-orange-900/30">
+                                    <div>
+                                        <div className="text-[10px] uppercase font-bold text-orange-600 dark:text-orange-500">Görüşüldü</div>
+                                        <div className="text-xl font-bold text-orange-700 dark:text-orange-400">{leadStats.gorusuldu}</div>
+                                    </div>
+                                    <MessageSquare size={18} className="text-orange-400 opacity-60" />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 4. FİNANSAL DURUM (Requested 4th) */}
+                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col justify-between h-full">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                                    <Wallet className="text-pnr-green" size={20} /> Finansal Durum
+                                </h2>
                                 <button onClick={() => navigateTo('/finance/profitability')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                                     <ArrowRight size={18} />
                                 </button>
                             </div>
-                        </div>
 
-                        <div className="space-y-4 mt-2">
-                            <div className="flex justify-between items-end">
-                                <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
-                                    <TrendingUp size={16} />
-                                    <span className="text-xs font-bold uppercase">Gelir</span>
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center bg-green-50 dark:bg-green-900/10 p-2.5 rounded-xl border border-green-100 dark:border-green-900/30">
+                                    <span className="text-[11px] font-bold uppercase text-green-600 dark:text-green-500">Gelir</span>
+                                    <span className="font-mono font-bold text-green-700 dark:text-green-400 text-sm">{formatCurrency(monthlyFinance.income)}</span>
                                 </div>
-                                <div className="font-mono font-bold text-sm text-slate-800 dark:text-slate-200">
-                                    {formatCurrency(monthlyFinance.income)}
+                                <div className="flex justify-between items-center bg-red-50 dark:bg-red-900/10 p-2.5 rounded-xl border border-red-100 dark:border-red-900/30">
+                                    <span className="text-[11px] font-bold uppercase text-red-600 dark:text-red-500">Gider</span>
+                                    <span className="font-mono font-bold text-red-700 dark:text-red-400 text-sm">{formatCurrency(monthlyFinance.expense)}</span>
                                 </div>
-                            </div>
-                            <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                <div className="bg-green-500 h-full rounded-full" style={{ width: '100%' }}></div>
                             </div>
 
-                            <div className="flex justify-between items-end">
-                                <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
-                                    <TrendingDown size={16} />
-                                    <span className="text-xs font-bold uppercase">Gider</span>
+                            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-end">
+                                <div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Net Bakiye (Bu Ay)</p>
+                                    <p className={`text-xl font-black font-mono tracking-tight ${monthlyFinance.balance >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
+                                        {formatCurrency(monthlyFinance.balance)}
+                                    </p>
                                 </div>
-                                <div className="font-mono font-bold text-sm text-slate-800 dark:text-slate-200">
-                                    {formatCurrency(monthlyFinance.expense)}
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${monthlyFinance.balance >= 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                                    {monthlyFinance.balance >= 0 ? <TrendingUp size={22} /> : <TrendingDown size={22} />}
                                 </div>
-                            </div>
-                            <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                <div className="bg-red-500 h-full rounded-full" style={{ width: `${monthlyFinance.income > 0 ? (monthlyFinance.expense / monthlyFinance.income) * 100 : 0}%` }}></div>
                             </div>
                         </div>
 
-                        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                            <span className="text-xs font-bold text-slate-500 uppercase">Net Bakiye</span>
-                            <span className={`text-lg font-bold font-mono ${monthlyFinance.balance >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
-                                {formatCurrency(monthlyFinance.balance)}
-                            </span>
-                        </div>
-                    </div>
-
-                </div>
-            </div>
-
-            {/* --- BOTTOM ROW: TO-DO LIST --- */}
-            <div className="grid grid-cols-1 pb-10">
-                <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm dark:shadow-none">
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-xl font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
-                            <CheckSquare size={20} className="text-pnr-purple" />
-                            Görevlerim (To-Do)
-                        </h2>
-                        <button onClick={() => navigateTo('/management/todo')} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-pnr-purple">
-                            <ArrowRight size={18} />
-                        </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {loading ? (
-                            <div className="text-center text-slate-400 py-4 col-span-full">Yükleniyor...</div>
-                        ) : todos.length > 0 ? (
-                            todos.map((task) => (
-                                <div key={task.id} className="group flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 hover:border-pnr-purple dark:hover:border-pnr-purple transition-all">
-                                    <button
-                                        onClick={() => handleCompleteTodo(task.id)}
-                                        className="mt-0.5 w-5 h-5 rounded-md border-2 border-slate-300 dark:border-slate-600 hover:border-pnr-purple hover:bg-pnr-purple text-transparent hover:text-white flex items-center justify-center transition-all shrink-0"
-                                    >
-                                        <CheckCircle2 size={14} />
-                                    </button>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-bold text-slate-800 dark:text-white leading-tight mb-1">{task.title}</p>
-                                        {task.description && (
-                                            <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">{task.description}</p>
-                                        )}
-                                        <div className="mt-2 flex items-center gap-1 text-[10px] text-slate-400">
-                                            <Clock size={10} />
-                                            {new Date(task.created_at).toLocaleDateString('tr-TR')}
+                        {/* 6. GÜNLÜK PROGRAM (Requested 6th) */}
+                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                                    <Calendar className="text-pnr-orange" size={20} /> Günlük Program
+                                </h2>
+                                <button onClick={() => navigateTo('/education/schedule')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                                    <ArrowRight size={18} />
+                                </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto max-h-[160px] custom-scrollbar pr-1 space-y-2">
+                                {loading ? (
+                                    <div className="text-center text-xs text-slate-400 py-4 italic">Yükleniyor...</div>
+                                ) : todaysLessons.length > 0 ? (
+                                    todaysLessons.map(lesson => (
+                                        <div key={lesson.id} className="flex items-center gap-3 p-2 rounded-lg border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                            <div className="text-center w-10 shrink-0">
+                                                <div className="text-xs font-black text-slate-800 dark:text-white">{lesson.time}</div>
+                                            </div>
+                                            <div className="w-1 h-6 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0"></div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-bold text-slate-800 dark:text-white text-xs truncate leading-tight">{lesson.title}</div>
+                                                <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1">
+                                                    <div className={`w-1.5 h-1.5 rounded-full ${lesson.type === 'group' ? 'bg-pnr-purple' : 'bg-pnr-blue'}`}></div>
+                                                    {lesson.subTitle}
+                                                </div>
+                                            </div>
                                         </div>
+                                    ))
+                                ) : (
+                                    <div className="text-center py-6 text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 italic">
+                                        Bugün için ders yok.
                                     </div>
-                                </div>
-                            ))
-                        ) : (
-                            <div className="text-center py-8 flex flex-col items-center gap-2 col-span-full">
-                                <CheckCircle2 size={24} className="text-green-500 mb-2" />
-                                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Bekleyen görev yok.</p>
+                                )}
                             </div>
-                        )}
+                        </div>
+
+                        {/* 7. SON KAYITLAR (Requested 7th) */}
+                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                                    <Users className="text-pnr-cyan" size={20} /> Son Kayıtlar
+                                </h2>
+                                <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                                    <ArrowRight size={18} />
+                                </button>
+                            </div>
+                            <div className="flex-1 space-y-2">
+                                {loading ? (
+                                    <div className="text-center text-xs text-slate-400 py-4 italic">Yükleniyor...</div>
+                                ) : recentStudents.length > 0 ? (
+                                    recentStudents.map(student => (
+                                        <div key={student.id} className="flex items-center gap-3 p-2 bg-slate-50 dark:bg-slate-800/20 rounded-xl border border-slate-100 dark:border-slate-800">
+                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 ${getBranchAvatarStyle(student.branch)}`}>
+                                                {student.name.charAt(0)}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-bold text-slate-900 dark:text-white text-[11px] truncate">{student.name}</div>
+                                                <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate">{student.branch}</div>
+                                            </div>
+                                            <div className="text-[9px] text-slate-400 whitespace-nowrap">{student.nextLesson}</div>
+                                        </div>
+                                    ))
+                                ) : <div className="text-center text-xs text-slate-400 italic">Kayıt yok.</div>}
+                            </div>
+                            <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-[10px]">
+                                <span className="text-slate-500 font-bold uppercase tracking-wider">Pasifler (Bu Ay):</span>
+                                <span className="font-black text-red-500 text-xs px-2 py-0.5 bg-red-50 dark:bg-red-900/20 rounded-full">{passiveThisMonth}</span>
+                            </div>
+                        </div>
+
                     </div>
+
                 </div>
             </div>
+
+            <div className="pb-10"></div>
         </div>
     );
 };
