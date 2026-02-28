@@ -39,7 +39,7 @@ const AdminDashboard: React.FC = () => {
 
     // New: Daily Schedule & Finance
     const [todaysLessons, setTodaysLessons] = useState<DailyLesson[]>([]);
-    const [monthlyFinance, setMonthlyFinance] = useState({ income: 0, expense: 0, balance: 0 });
+    const [monthlyFinance, setMonthlyFinance] = useState({ income: 0, expense: 0, balance: 0, totalBalance: 0 });
 
     // --- Helper: Branch Color Mapping ---
     const getBranchAvatarStyle = (branchName: string) => {
@@ -163,7 +163,15 @@ const AdminDashboard: React.FC = () => {
             if (cashData) {
                 const inc = cashData.filter(x => x.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
                 const exp = cashData.filter(x => x.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
-                setMonthlyFinance({ income: inc, expense: exp, balance: inc - exp });
+
+                // Fetch TOTAL BALANCE (All time)
+                const { data: allCash } = await supabase.from('cash_book').select('amount, type');
+                let total = 0;
+                if (allCash) {
+                    total = allCash.reduce((acc, curr) => curr.type === 'income' ? acc + (curr.amount || 0) : acc - (curr.amount || 0), 0);
+                }
+
+                setMonthlyFinance({ income: inc, expense: exp, balance: inc - exp, totalBalance: total });
             }
 
             // --- PROCESS LEADS ---
@@ -420,7 +428,7 @@ const AdminDashboard: React.FC = () => {
                         </div>
 
                         {/* 4. FİNANSAL DURUM (Requested 4th) */}
-                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col justify-between h-full">
+                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <Wallet className="text-pnr-green" size={20} /> Finansal Durum
@@ -430,27 +438,25 @@ const AdminDashboard: React.FC = () => {
                                 </button>
                             </div>
 
-                            <div className="space-y-3">
-                                <div className="flex justify-between items-center bg-green-50 dark:bg-green-900/10 p-2.5 rounded-xl border border-green-100 dark:border-green-900/30">
-                                    <span className="text-[11px] font-bold uppercase text-green-600 dark:text-green-500">Gelir</span>
-                                    <span className="font-mono font-bold text-green-700 dark:text-green-400 text-sm">{formatCurrency(monthlyFinance.income)}</span>
-                                </div>
-                                <div className="flex justify-between items-center bg-red-50 dark:bg-red-900/10 p-2.5 rounded-xl border border-red-100 dark:border-red-900/30">
-                                    <span className="text-[11px] font-bold uppercase text-red-600 dark:text-red-500">Gider</span>
-                                    <span className="font-mono font-bold text-red-700 dark:text-red-400 text-sm">{formatCurrency(monthlyFinance.expense)}</span>
+                            <div className="flex-1 flex flex-col justify-center items-center py-4">
+                                <div className="text-center">
+                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Toplam Kasa Bakiyesi</p>
+                                    <p className={`text-3xl font-black font-mono tracking-tight ${monthlyFinance.totalBalance >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
+                                        {formatCurrency(monthlyFinance.totalBalance)}
+                                    </p>
                                 </div>
                             </div>
 
-                            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-end">
-                                <div>
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Net Bakiye (Bu Ay)</p>
-                                    <p className={`text-xl font-black font-mono tracking-tight ${monthlyFinance.balance >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
-                                        {formatCurrency(monthlyFinance.balance)}
-                                    </p>
+                            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                                <div className="flex items-center gap-2">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${monthlyFinance.totalBalance >= 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                                        {monthlyFinance.totalBalance >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+                                    </div>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Durum</span>
                                 </div>
-                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${monthlyFinance.balance >= 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                                    {monthlyFinance.balance >= 0 ? <TrendingUp size={22} /> : <TrendingDown size={22} />}
-                                </div>
+                                <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${monthlyFinance.totalBalance >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                                    {monthlyFinance.totalBalance >= 0 ? 'Kârda' : 'Zararda'}
+                                </span>
                             </div>
                         </div>
 
