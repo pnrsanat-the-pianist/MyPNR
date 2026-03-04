@@ -85,7 +85,11 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
 
     // --- Helpers ---
     const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amount);
+        // Use Turkish locale to ensure "." is thousands and "," is decimal, matching the requested image exactly
+        return new Intl.NumberFormat('tr-TR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(amount);
     };
 
     const formatDate = (dateStr: string) => {
@@ -151,21 +155,42 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
 
     // Robust parser for Turkish currency strings like "-1.250,50 TL" or "1.250,50-"
     const parseTurkishAmount = (val: any): number => {
+        if (val === undefined || val === null) return 0;
         if (typeof val === 'number') return val;
         if (typeof val !== 'string') return 0;
 
         let str = val.trim();
-        // 1. Check for negative signs (hyphen at start/end, or parentheses)
+        if (!str) return 0;
+
         const isNegative = str.startsWith('-') || str.endsWith('-') || (str.startsWith('(') && str.endsWith(')'));
 
-        // 2. Remove all non-numeric characters EXCEPT comma (decimal separator in TR)
-        // We implicitly treat dots as thousands separators and remove them.
-        // We remove currency symbols (TL, $, etc), letters, spaces, and minus signs.
-        let cleanStr = str.replace(/\./g, ''); // Remove thousands dots
-        cleanStr = cleanStr.replace(/[^0-9,]/g, ''); // Keep only digits and comma
-        cleanStr = cleanStr.replace(',', '.'); // Convert decimal comma to dot for JS
+        // Handle symbols like "TL", spaces, etc.
+        let clean = str.replace(/[^0-9,.]/g, '');
 
-        let num = parseFloat(cleanStr);
+        if (clean.includes(',') && clean.includes('.')) {
+            // Both exist. Assume the last one is decimal.
+            if (clean.lastIndexOf(',') > clean.lastIndexOf('.')) {
+                // Turkish: 1.234,56
+                clean = clean.replace(/\./g, '').replace(',', '.');
+            } else {
+                // English: 1,234.56
+                clean = clean.replace(/,/g, '');
+            }
+        } else if (clean.includes(',')) {
+            // Only comma -> Decimal
+            clean = clean.replace(',', '.');
+        } else if (clean.includes('.')) {
+            // Only dot. Check if it looks like thousands or decimal
+            const parts = clean.split('.');
+            const lastPart = parts[parts.length - 1];
+            if (lastPart.length === 3) {
+                clean = clean.replace(/\./g, ''); // Treat as thousands
+            } else {
+                // Treat as decimal (Keep the dot)
+            }
+        }
+
+        let num = parseFloat(clean);
         if (isNaN(num)) return 0;
 
         return isNegative ? -num : num;
@@ -183,30 +208,46 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                     const wb = XLSX.read(bstr, { type: 'array' });
                     const wsname = wb.SheetNames[0];
                     const ws = wb.Sheets[wsname];
-                    // Using raw: false tries to format dates as strings which is helpful for parsing
-                    const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+                    // Removed 'raw: false' to allow numeric cells to come through as actual numbers
+                    const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
                     const parsedRows: ImportedRow[] = [];
 
-                    // Helper to detect column indexes based on headers if available
                     let dateIdx = -1;
                     let descIdx = -1;
                     let amountIdx = -1;
+                    let bakiyeIdx = -1;
 
-                    // Heuristic search for headers in first 10 rows
-                    for (let i = 0; i < Math.min(data.length, 10); i++) {
+                    // Heuristic search for headers in first 15 rows (increased range)
+                    for (let i = 0; i < Math.min(data.length, 15); i++) {
                         const row = data[i];
                         row.forEach((cell: any, idx: number) => {
                             if (typeof cell !== 'string') return;
-                            const c = cell.toLowerCase();
-                            if (c.includes('tarih')) dateIdx = idx;
-                            if (c.includes('açıklama') || c.includes('aciklama')) descIdx = idx;
-                            if (c.includes('tutar') || c.includes('bakıye') || c.includes('bakiye')) {
-                                // Prefer "Tutar" if found, usually Tutar is before Bakiye
-                                if (amountIdx === -1 || c.includes('tutar')) amountIdx = idx;
+                            const normalized = cell.toLowerCase().trim();
+
+                            // 1. Date Detection
+                            if (normalized.includes('tarih')) dateIdx = idx;
+
+                            // 2. Description Detection
+                            if (normalized.includes('açıklama') || normalized.includes('aciklama')) descIdx = idx;
+
+                            // 3. Amount Detection (Priority: Tutar/İşlem Tutarı, Excluding Bakiye/Güncel)
+                            const isBakiye = normalized.includes('bakıye') || normalized.includes('bakiye') || normalized.includes('güncel') || normalized.includes('guncel');
+
+                            if ((normalized.includes('tutar') || normalized.includes('borç') || normalized.includes('alacak')) && !isBakiye) {
+                                // Prefer "tutar (tl)" or exact "tutar" if multiple found
+                                if (amountIdx === -1 || normalized === 'tutar' || normalized.includes('(tl)')) {
+                                    amountIdx = idx;
+                                }
+                            }
+
+                            // 4. Bakiye Detection (to EXCLUDE it from fallback)
+                            if (isBakiye) {
+                                bakiyeIdx = idx;
                             }
                         });
-                        if (dateIdx !== -1 && amountIdx !== -1) break; // Found headers
+                        // Stop if we have found the critical identifying columns
+                        if (dateIdx !== -1 && amountIdx !== -1) break;
                     }
 
                     data.forEach((row, idx) => {
@@ -215,20 +256,29 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                         // 1. Find Date Cell
                         let dateCellIndex = dateIdx;
                         if (dateCellIndex === -1 || !row[dateCellIndex]) {
-                            // Fallback: search for regex match in row
+                            // Fallback: search for date-like value in row
                             dateCellIndex = row.findIndex(cell =>
-                                typeof cell === 'string' && cell.match(/^\d{2}[./-]\d{2}[./-]\d{4}/) // Matches DD.MM.YYYY even with time
+                                (cell instanceof Date) || (typeof cell === 'string' && cell.match(/^\d{2}[./-]\d{2}[./-]\d{4}/))
                             );
                         }
-                        if (dateCellIndex === -1) return; // Skip if no date
+                        if (dateCellIndex === -1) return;
 
-                        const dateStrRaw = row[dateCellIndex];
-                        const dateMatch = dateStrRaw.match(/(\d{2})[./-](\d{2})[./-](\d{4})/);
-                        if (!dateMatch) return;
+                        let isoDate = '';
+                        let dateObj: Date | null = null;
+                        const rawDate = row[dateCellIndex];
 
-                        const [_, d, m, y] = dateMatch;
-                        const isoDate = `${y}-${m}-${d}`;
-                        const dateObj = new Date(isoDate);
+                        if (rawDate instanceof Date) {
+                            dateObj = rawDate;
+                            isoDate = rawDate.toISOString().split('T')[0];
+                        } else if (typeof rawDate === 'string') {
+                            const dateMatch = rawDate.match(/(\d{2})[./-](\d{2})[./-](\d{4})/);
+                            if (dateMatch) {
+                                const [_, d, m, y] = dateMatch;
+                                isoDate = `${y}-${m}-${d}`;
+                                dateObj = new Date(isoDate);
+                            }
+                        }
+                        if (!isoDate || !dateObj) return;
 
                         // 2. Find Amount Cell
                         let amount = 0;
@@ -240,11 +290,13 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                             if (amount !== 0) amountFound = true;
                         }
 
-                        // Fallback: search row for numbers if column not identified or empty
+                        // Fallback: search row for numbers if column not identified or explicitly empty
                         if (!amountFound) {
                             // Iterate backwards, usually amount is towards end
                             for (let i = row.length - 1; i >= 0; i--) {
-                                if (i === dateCellIndex) continue;
+                                // Skip identified non-amount columns (date, description, and specifically bakiye)
+                                if (i === dateCellIndex || i === bakiyeIdx || i === descIdx) continue;
+
                                 const val = parseTurkishAmount(row[i]);
                                 if (val !== 0) {
                                     amount = val;
@@ -280,10 +332,35 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
 
                             // POS Auto-detection logic
                             let detectedCategoryId = '';
-                            // Look for POS keywords or specific merchant IDs
-                            if (desc.includes('958000001790549') || desc.toUpperCase().includes('POS')) {
-                                const posCat = categories.find(c => c.title.toUpperCase() === 'POS');
-                                if (posCat) detectedCategoryId = posCat.id;
+                            let detectedSubCategoryId = '';
+
+                            const normDesc = desc.toLocaleUpperCase('tr-TR');
+                            const isPOSMatch = normDesc.includes('ÜYE İŞYERİ İŞLEMİ') ||
+                                normDesc.includes('ÜYE İŞYERI İŞLEMI') ||
+                                normDesc.includes('UYE ISYERI ISLEMI') ||
+                                desc.includes('958000001790549') ||
+                                normDesc.includes('POS');
+
+                            if (isPOSMatch) {
+                                // Find "Hesaplar arası" category in a case-insensitive way
+                                const targetCat = categories.find(c => {
+                                    const cTit = c.title.toLocaleUpperCase('tr-TR');
+                                    return cTit.includes('HESAPLAR ARASI') || cTit.includes('HESAPLAR ARASI');
+                                }) || categories.find(c => c.title.toLocaleUpperCase('tr-TR').includes('POS'));
+
+                                if (targetCat) {
+                                    detectedCategoryId = targetCat.id;
+                                    // Find "Denizbank Pos" subcat
+                                    const targetSubCat = targetCat.descriptions.find(d => {
+                                        const dDesc = d.description.toLocaleUpperCase('tr-TR');
+                                        return dDesc.includes('DENIZBANK POS') || dDesc.includes('DENİZBANK POS');
+                                    });
+                                    if (targetSubCat) detectedSubCategoryId = targetSubCat.id;
+
+                                    console.log(`[POS Auto-Detect] Match: "${desc}" -> Category: ${targetCat.title}, Sub: ${targetSubCat?.description || 'None'}`);
+                                } else {
+                                    console.warn(`[POS Auto-Detect] Keyword found in "${desc}", but target category "Hesaplar arası" or "POS" was not found.`);
+                                }
                             }
 
                             parsedRows.push({
@@ -294,7 +371,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                                 type: type, // Sign determines type
                                 isSelected: true,
                                 categoryId: detectedCategoryId,
-                                subCategoryId: '',
+                                subCategoryId: detectedSubCategoryId,
                                 targetMonth: isNaN(dateObj.getTime()) ? new Date().getMonth() : dateObj.getMonth(),
                                 targetYear: isNaN(dateObj.getTime()) ? new Date().getFullYear() : dateObj.getFullYear(),
                                 installments: 1
@@ -456,7 +533,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                 type: formData.type,
                 category_id: formData.categoryId,
                 category_name: cat?.title || '',
-                amount: parseFloat(formData.amount),
+                amount: parseTurkishAmount(formData.amount),
                 description: formData.description
             });
 
@@ -616,8 +693,8 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                                             <td className="p-4 text-center text-xs text-slate-500">
                                                 {record.installment_info || '-'}
                                             </td>
-                                            <td className={`p-4 text-right font-bold text-sm ${record.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                                                {record.type === 'income' ? '+' : '-'}{formatCurrency(record.amount)}
+                                            <td className={`p-4 text-right font-bold text-sm ${record.type === 'income' ? 'text-blue-600' : 'text-red-600'}`}>
+                                                {record.type === 'income' ? '' : '-'}{formatCurrency(record.amount)}
                                             </td>
                                             <td className="p-4 text-center">
                                                 {canEdit && (
@@ -740,14 +817,14 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                                                 <td className="p-3 text-slate-900 dark:text-white align-middle truncate max-w-[200px]" title={row.description}>
                                                     {row.description}
                                                 </td>
-                                                <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-green-600'}`}>
+                                                <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-blue-600'}`}>
                                                     {row.type === 'expense' ? '-' : ''}{formatCurrency(row.amount)}
                                                 </td>
                                                 <td className="p-2 align-middle">
                                                     <select
                                                         className={`w-full border rounded p-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-offset-1 ${row.type === 'income'
-                                                                ? 'bg-green-50 text-green-700 border-green-200 focus:ring-green-500'
-                                                                : 'bg-red-50 text-red-700 border-red-200 focus:ring-red-500'
+                                                            ? 'bg-green-50 text-green-700 border-green-200 focus:ring-green-500'
+                                                            : 'bg-red-50 text-red-700 border-red-200 focus:ring-red-500'
                                                             }`}
                                                         value={row.type}
                                                         onChange={(e) => updateImportRow(row.id, 'type', e.target.value as 'income' | 'expense')}

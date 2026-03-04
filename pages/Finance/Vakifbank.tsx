@@ -85,7 +85,10 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
 
     // --- Helpers ---
     const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amount);
+        return new Intl.NumberFormat('tr-TR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(amount);
     };
 
     const formatDate = (dateStr: string) => {
@@ -149,17 +152,34 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
 
     // --- Excel Parsing Logic ---
     const parseTurkishAmount = (val: any): number => {
+        if (val === undefined || val === null) return 0;
         if (typeof val === 'number') return val;
         if (typeof val !== 'string') return 0;
 
         let str = val.trim();
+        if (!str) return 0;
+
         const isNegative = str.startsWith('-') || str.endsWith('-') || (str.startsWith('(') && str.endsWith(')'));
 
-        let cleanStr = str.replace(/\./g, ''); // Remove thousands dots
-        cleanStr = cleanStr.replace(/[^0-9,]/g, ''); // Keep only digits and comma
-        cleanStr = cleanStr.replace(',', '.'); // Convert decimal comma to dot for JS
+        let clean = str.replace(/[^0-9,.]/g, '');
 
-        let num = parseFloat(cleanStr);
+        if (clean.includes(',') && clean.includes('.')) {
+            if (clean.lastIndexOf(',') > clean.lastIndexOf('.')) {
+                clean = clean.replace(/\./g, '').replace(',', '.');
+            } else {
+                clean = clean.replace(/,/g, '');
+            }
+        } else if (clean.includes(',')) {
+            clean = clean.replace(',', '.');
+        } else if (clean.includes('.')) {
+            const parts = clean.split('.');
+            const lastPart = parts[parts.length - 1];
+            if (lastPart.length === 3) {
+                clean = clean.replace(/\./g, '');
+            }
+        }
+
+        let num = parseFloat(clean);
         if (isNaN(num)) return 0;
 
         return isNegative ? -num : num;
@@ -177,25 +197,32 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                     const wb = XLSX.read(bstr, { type: 'array' });
                     const wsname = wb.SheetNames[0];
                     const ws = wb.Sheets[wsname];
-                    const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+                    const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
                     const parsedRows: ImportedRow[] = [];
 
                     let dateIdx = -1;
                     let descIdx = -1;
                     let amountIdx = -1;
+                    let bakiyeIdx = -1;
 
-                    // Heuristic search for headers
-                    for (let i = 0; i < Math.min(data.length, 10); i++) {
+                    // Header Detection
+                    for (let i = 0; i < Math.min(data.length, 15); i++) {
                         const row = data[i];
                         row.forEach((cell: any, idx: number) => {
                             if (typeof cell !== 'string') return;
-                            const c = cell.toLowerCase();
-                            if (c.includes('tarih')) dateIdx = idx;
-                            if (c.includes('açıklama') || c.includes('aciklama')) descIdx = idx;
-                            if (c.includes('tutar') || c.includes('bakıye') || c.includes('bakiye')) {
-                                if (amountIdx === -1 || c.includes('tutar')) amountIdx = idx;
+                            const normalized = cell.toLowerCase().trim();
+                            if (normalized.includes('tarih')) dateIdx = idx;
+                            if (normalized.includes('açıklama') || normalized.includes('aciklama')) descIdx = idx;
+
+                            const isBakiye = normalized.includes('bakıye') || normalized.includes('bakiye') || normalized.includes('güncel') || normalized.includes('guncel');
+
+                            if ((normalized.includes('tutar') || normalized.includes('borç') || normalized.includes('alacak') || normalized.includes('net')) && !isBakiye) {
+                                if (amountIdx === -1 || normalized === 'tutar' || normalized.includes('(tl)')) {
+                                    amountIdx = idx;
+                                }
                             }
+                            if (isBakiye) bakiyeIdx = idx;
                         });
                         if (dateIdx !== -1 && amountIdx !== -1) break;
                     }
@@ -206,18 +233,27 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                         let dateCellIndex = dateIdx;
                         if (dateCellIndex === -1 || !row[dateCellIndex]) {
                             dateCellIndex = row.findIndex(cell =>
-                                typeof cell === 'string' && cell.match(/^\d{2}[./-]\d{2}[./-]\d{4}/)
+                                (cell instanceof Date) || (typeof cell === 'string' && cell.match(/^\d{2}[./-]\d{2}[./-]\d{4}/))
                             );
                         }
                         if (dateCellIndex === -1) return;
 
-                        const dateStrRaw = row[dateCellIndex];
-                        const dateMatch = dateStrRaw.match(/(\d{2})[./-](\d{2})[./-](\d{4})/);
-                        if (!dateMatch) return;
+                        let isoDate = '';
+                        let dateObj: Date | null = null;
+                        const rawDate = row[dateCellIndex];
 
-                        const [_, d, m, y] = dateMatch;
-                        const isoDate = `${y}-${m}-${d}`;
-                        const dateObj = new Date(isoDate);
+                        if (rawDate instanceof Date) {
+                            dateObj = rawDate;
+                            isoDate = rawDate.toISOString().split('T')[0];
+                        } else if (typeof rawDate === 'string') {
+                            const dateMatch = rawDate.match(/(\d{2})[./-](\d{2})[./-](\d{4})/);
+                            if (dateMatch) {
+                                const [_, d, m, y] = dateMatch;
+                                isoDate = `${y}-${m}-${d}`;
+                                dateObj = new Date(isoDate);
+                            }
+                        }
+                        if (!isoDate || !dateObj) return;
 
                         let amount = 0;
                         let amountFound = false;
@@ -229,7 +265,7 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
 
                         if (!amountFound) {
                             for (let i = row.length - 1; i >= 0; i--) {
-                                if (i === dateCellIndex) continue;
+                                if (i === dateCellIndex || i === bakiyeIdx || i === descIdx) continue;
                                 const val = parseTurkishAmount(row[i]);
                                 if (val !== 0) {
                                     amount = val;
@@ -257,7 +293,32 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                         if (amountFound && amount !== 0) {
                             const type = amount > 0 ? 'income' : 'expense';
 
+                            // POS Auto-detection logic
                             let detectedCategoryId = '';
+                            let detectedSubCategoryId = '';
+
+                            const normDesc = desc.toLocaleUpperCase('tr-TR');
+                            const isPOSMatch = normDesc.includes('ÜYE İŞYERİ İŞLEMİ') ||
+                                normDesc.includes('ÜYE İŞYERI İŞLEMI') ||
+                                normDesc.includes('UYE ISYERI ISLEMI') ||
+                                desc.includes('958000001790549') ||
+                                normDesc.includes('POS');
+
+                            if (isPOSMatch) {
+                                const targetCat = categories.find(c => {
+                                    const cTit = c.title.toLocaleUpperCase('tr-TR');
+                                    return cTit.includes('HESAPLAR ARASI') || cTit.includes('HESAPLAR ARASI');
+                                }) || categories.find(c => c.title.toLocaleUpperCase('tr-TR').includes('POS'));
+
+                                if (targetCat) {
+                                    detectedCategoryId = targetCat.id;
+                                    const targetSubCat = targetCat.descriptions.find(d => {
+                                        const dDesc = d.description.toLocaleUpperCase('tr-TR');
+                                        return dDesc.includes('DENIZBANK POS') || dDesc.includes('DENİZBANK POS');
+                                    });
+                                    if (targetSubCat) detectedSubCategoryId = targetSubCat.id;
+                                }
+                            }
 
                             parsedRows.push({
                                 id: Math.random().toString(36).substr(2, 9),
@@ -267,7 +328,7 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                 type: type,
                                 isSelected: true,
                                 categoryId: detectedCategoryId,
-                                subCategoryId: '',
+                                subCategoryId: detectedSubCategoryId,
                                 targetMonth: isNaN(dateObj.getTime()) ? new Date().getMonth() : dateObj.getMonth(),
                                 targetYear: isNaN(dateObj.getTime()) ? new Date().getFullYear() : dateObj.getFullYear(),
                                 installments: 1
@@ -389,7 +450,6 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                 }
             });
 
-            // Insert into vakifbank_book
             const { error } = await supabase.from('vakifbank_book').insert(dbRows);
             if (error) throw error;
 
@@ -413,13 +473,12 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
         setLoading(true);
         try {
             const cat = categories.find(c => c.id === formData.categoryId);
-            // Insert into vakifbank_book
             const { error } = await supabase.from('vakifbank_book').insert({
                 date: formData.date,
                 type: formData.type,
                 category_id: formData.categoryId,
                 category_name: cat?.title || '',
-                amount: parseFloat(formData.amount),
+                amount: parseTurkishAmount(formData.amount),
                 description: formData.description
             });
 
@@ -445,7 +504,6 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
     const handleDelete = async (id: string) => {
         if (!canEdit || !confirm("Bu kaydı silmek istediğinize emin misiniz?")) return;
         try {
-            // Delete from vakifbank_book
             const { error } = await supabase.from('vakifbank_book').delete().eq('id', id);
             if (error) throw error;
             setRecords(prev => prev.filter(r => r.id !== id));
@@ -580,8 +638,8 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                             <td className="p-4 text-center text-xs text-slate-500">
                                                 {record.installment_info || '-'}
                                             </td>
-                                            <td className={`p-4 text-right font-bold text-sm ${record.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                                                {record.type === 'income' ? '+' : '-'}{formatCurrency(record.amount)}
+                                            <td className={`p-4 text-right font-bold text-sm ${record.type === 'income' ? 'text-blue-600' : 'text-red-600'}`}>
+                                                {record.type === 'income' ? '' : '-'}{formatCurrency(record.amount)}
                                             </td>
                                             <td className="p-4 text-center">
                                                 {canEdit && (
@@ -616,7 +674,7 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                     <div className="bg-white dark:bg-pnr-card w-full max-w-[95vw] h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
                         <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
                             <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-                                <FileText size={20} className="text-pnr-purple" /> Dosya Önizleme ve Düzenleme
+                                <FileText size={20} className="text-pnr-purple" /> Dosya Önizleme ve Düzenleme (Vakıfbank)
                             </h3>
                             <button onClick={() => setIsUploadModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-900" /></button>
                         </div>
@@ -688,7 +746,6 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                     {importedRows.map((row) => {
                                         const rowCategory = categories.find(c => c.id === row.categoryId);
-                                        // Check Validation Logic
                                         const isCategoryMissing = !row.categoryId;
                                         const hasSubOptions = rowCategory?.descriptions && rowCategory.descriptions.length > 0;
                                         const isSubCategoryMissing = hasSubOptions && !row.subCategoryId;
@@ -704,14 +761,14 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                                 <td className="p-3 text-slate-900 dark:text-white align-middle truncate max-w-[200px]" title={row.description}>
                                                     {row.description}
                                                 </td>
-                                                <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-green-600'}`}>
+                                                <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-blue-600'}`}>
                                                     {row.type === 'expense' ? '-' : ''}{formatCurrency(row.amount)}
                                                 </td>
                                                 <td className="p-2 align-middle">
                                                     <select
                                                         className={`w-full border rounded p-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-offset-1 ${row.type === 'income'
-                                                                ? 'bg-green-50 text-green-700 border-green-200 focus:ring-green-500'
-                                                                : 'bg-red-50 text-red-700 border-red-200 focus:ring-red-500'
+                                                            ? 'bg-green-50 text-green-700 border-green-200 focus:ring-green-500'
+                                                            : 'bg-red-50 text-red-700 border-red-200 focus:ring-red-500'
                                                             }`}
                                                         value={row.type}
                                                         onChange={(e) => updateImportRow(row.id, 'type', e.target.value as 'income' | 'expense')}
@@ -803,53 +860,87 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
             {/* MANUAL ADD MODAL */}
             {isManualModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-pnr-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
-                        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
-                            <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-                                <Plus size={20} className="text-pnr-purple" /> Yeni Kayıt Ekle
-                            </h3>
-                            <button onClick={() => setIsManualModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-900" /></button>
+                    <div className="bg-white dark:bg-pnr-card w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
+                        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                            <h3 className="font-bold text-lg text-slate-900 dark:text-white">Manuel İşlem Ekle</h3>
+                            <button onClick={() => setIsManualModalOpen(false)}><X size={20} className="text-slate-400" /></button>
                         </div>
-
-                        <form onSubmit={handleManualSave} className="p-6 space-y-4">
-                            <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-                                <button type="button" onClick={() => setFormData({ ...formData, type: 'income' })} className={`py-2 rounded-lg text-sm font-bold ${formData.type === 'income' ? 'bg-white dark:bg-slate-700 text-green-600 shadow-sm' : 'text-slate-500'}`}>Gelir</button>
-                                <button type="button" onClick={() => setFormData({ ...formData, type: 'expense' })} className={`py-2 rounded-lg text-sm font-bold ${formData.type === 'expense' ? 'bg-white dark:bg-slate-700 text-red-600 shadow-sm' : 'text-slate-500'}`}>Gider</button>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tarih</label>
-                                <input type="date" required className="w-full bg-slate-50 dark:bg-slate-900 border rounded-lg p-2.5 text-sm dark:text-white" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} />
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Açıklama</label>
-                                <input type="text" className="w-full bg-slate-50 dark:bg-slate-900 border rounded-lg p-2.5 text-sm dark:text-white" placeholder="Örn: Kira Ödemesi" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
+                        <form onSubmit={handleManualSave} className="p-5 space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tarih</label>
+                                    <input
+                                        type="date"
+                                        required
+                                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
+                                        value={formData.date}
+                                        onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tür</label>
+                                    <select
+                                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
+                                        value={formData.type}
+                                        onChange={(e) => setFormData({ ...formData, type: e.target.value as any, categoryId: '' })}
+                                    >
+                                        <option value="income">Gelir (+)</option>
+                                        <option value="expense">Gider (-)</option>
+                                    </select>
+                                </div>
                             </div>
 
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Kategori</label>
-                                <select required className="w-full bg-slate-50 dark:bg-slate-900 border rounded-lg p-2.5 text-sm dark:text-white" value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}>
-                                    <option value="">Seçiniz</option>
-                                    {categories.filter(c => c.type === formData.type).map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                                <select
+                                    required
+                                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
+                                    value={formData.categoryId}
+                                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                                >
+                                    <option value="">Seçiniz...</option>
+                                    {categories.filter(c => c.type === formData.type).map(c => (
+                                        <option key={c.id} value={c.id}>{c.title}</option>
+                                    ))}
                                 </select>
                             </div>
 
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tutar (TL)</label>
-                                <input type="number" step="0.01" required className="w-full bg-slate-50 dark:bg-slate-900 border rounded-lg p-2.5 text-sm dark:text-white" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} />
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tutar</label>
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        required
+                                        placeholder="0,00"
+                                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 pl-10 text-sm font-bold dark:text-white"
+                                        value={formData.amount}
+                                        onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                                    />
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₺</span>
+                                </div>
                             </div>
 
-                            <div className="pt-2">
-                                <button type="submit" disabled={loading} className="w-full bg-pnr-purple hover:bg-pnr-indigo text-white py-3 rounded-xl font-bold shadow-lg transition-transform active:scale-95 disabled:opacity-70">
-                                    {loading ? 'Kaydediliyor...' : 'Kaydet'}
-                                </button>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Açıklama</label>
+                                <textarea
+                                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white h-24"
+                                    placeholder="İşlem detayı..."
+                                    value={formData.description}
+                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                />
                             </div>
+
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="w-full bg-pnr-purple hover:bg-pnr-indigo text-white p-3 rounded-xl font-bold shadow-lg transition-transform active:scale-95"
+                            >
+                                {loading ? 'Kaydediliyor...' : 'Kaydet'}
+                            </button>
                         </form>
                     </div>
                 </div>
             )}
-
         </div>
     );
 };
