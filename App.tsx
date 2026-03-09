@@ -23,6 +23,7 @@ import Vakifbank from './pages/Finance/Vakifbank';
 import Profitability from './pages/Finance/Profitability';
 import Salaries from './pages/Finance/Salaries';
 import Banks from './pages/Finance/Banks';
+import CategoryAutomation from './pages/Finance/Automation';
 import Settings from './pages/System/Settings';
 import { UserRole } from './types';
 import { supabase } from './lib/supabaseClient';
@@ -245,6 +246,8 @@ const App: React.FC = () => {
         return renderProtectedPage('maas', (canEdit) => <Salaries canEdit={canEdit} />);
       case '/finance/banks':
         return renderProtectedPage('bankalar', (canEdit) => <Banks canEdit={canEdit} />);
+      case '/finance/automation':
+        return renderProtectedPage('category-automation', (canEdit) => <CategoryAutomation canEdit={canEdit} />);
 
       // System
       case '/system/users':

@@ -2,8 +2,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Plus, CreditCard, TrendingUp, TrendingDown, Search,
-    Save, X, Upload, CheckSquare, Square, Trash2,
-    FileText, Landmark, RefreshCcw
+    Save, Upload, CheckSquare, Square, Trash2,
+    FileText, Landmark, RefreshCcw, EyeOff, FileText as FileIcon, X
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import * as XLSX from 'xlsx';
@@ -29,6 +29,13 @@ interface CategoryOption {
     title: string;
     type: 'income' | 'expense';
     descriptions: CategoryDescription[];
+}
+
+interface AutomationRule {
+    id: string;
+    keyword: string;
+    category_id: string;
+    sub_category_id: string;
 }
 
 interface ImportedRow {
@@ -59,12 +66,14 @@ interface DenizbankPOSProps {
 const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     const [records, setRecords] = useState<BankRecord[]>([]);
     const [categories, setCategories] = useState<CategoryOption[]>([]);
+    const [automationRules, setAutomationRules] = useState<AutomationRule[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
 
     // Modals
     const [isManualModalOpen, setIsManualModalOpen] = useState(false);
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+    const [hideCategorized, setHideCategorized] = useState(false);
 
     // Upload State
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -131,7 +140,11 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                 setCategories(formattedCategories);
             }
 
-            // 2. Fetch All Transactions from POS Book
+            // 2. Fetch Automation Rules
+            const { data: ruleData } = await supabase.from('category_automation_rules').select('*');
+            setAutomationRules(ruleData || []);
+
+            // 3. Fetch All Transactions from POS Book
             const { data: recordData, error } = await supabase
                 .from('denizbank_pos_book')
                 .select('*')
@@ -305,31 +318,21 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                         if (amountFound && amount !== 0) {
                             const type = amount > 0 ? 'income' : 'expense';
 
-                            // POS Auto-detection logic (Same as Denizbank branch)
+                            // POS Auto-detection logic
                             let detectedCategoryId = '';
                             let detectedSubCategoryId = '';
 
                             const normDesc = desc.toLocaleUpperCase('tr-TR');
-                            const isPOSMatch = normDesc.includes('ÜYE İŞYERİ İŞLEMİ') ||
-                                normDesc.includes('ÜYE İŞYERI İŞLEMI') ||
-                                normDesc.includes('UYE ISYERI ISLEMI') ||
-                                desc.includes('958000001790549') ||
-                                normDesc.includes('POS');
 
-                            if (isPOSMatch) {
-                                const targetCat = categories.find(c => {
-                                    const cTit = c.title.toLocaleUpperCase('tr-TR');
-                                    return cTit.includes('HESAPLAR ARASI') || cTit.includes('HESAPLAR ARASI');
-                                }) || categories.find(c => c.title.toLocaleUpperCase('tr-TR').includes('POS'));
+                            // 1. DYNAMIC CATEGORY AUTOMATION (Priority)
+                            const matchedRule = automationRules.find(rule =>
+                                normDesc.includes(rule.keyword.toLocaleUpperCase('tr-TR'))
+                            );
 
-                                if (targetCat) {
-                                    detectedCategoryId = targetCat.id;
-                                    const targetSubCat = targetCat.descriptions.find(d => {
-                                        const dDesc = d.description.toLocaleUpperCase('tr-TR');
-                                        return dDesc.includes('DENIZBANK POS') || dDesc.includes('DENİZBANK POS');
-                                    });
-                                    if (targetSubCat) detectedSubCategoryId = targetSubCat.id;
-                                }
+                            if (matchedRule) {
+                                detectedCategoryId = matchedRule.category_id;
+                                detectedSubCategoryId = matchedRule.sub_category_id || '';
+                                console.log(`[Automation Match] Keyword: "${matchedRule.keyword}" -> Desc: "${desc}"`);
                             }
 
                             parsedRows.push({
@@ -724,6 +727,19 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                             >
                                 Uygula
                             </button>
+                            <div className="flex items-center gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-xl h-[34px]">
+                                <span className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">Sadece Alt Ktg Olmayanlar</span>
+                                <button
+                                    onClick={() => setHideCategorized(!hideCategorized)}
+                                    className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${hideCategorized ? 'bg-pnr-purple' : 'bg-slate-200 dark:bg-slate-700'
+                                        }`}
+                                >
+                                    <span
+                                        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${hideCategorized ? 'translate-x-6' : 'translate-x-1'
+                                            }`}
+                                    />
+                                </button>
+                            </div>
                             <div className="text-xs text-slate-500 ml-auto flex items-center">
                                 {importedRows.filter(r => r.isSelected).length} satır seçildi.
                             </div>
@@ -756,101 +772,103 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                    {importedRows.map((row) => {
-                                        const rowCategory = categories.find(c => c.id === row.categoryId);
-                                        const isCategoryMissing = !row.categoryId;
-                                        const hasSubOptions = rowCategory?.descriptions && rowCategory.descriptions.length > 0;
-                                        const isSubCategoryMissing = hasSubOptions && !row.subCategoryId;
+                                    {importedRows
+                                        .filter(row => !hideCategorized || !row.subCategoryId)
+                                        .map((row) => {
+                                            const rowCategory = categories.find(c => c.id === row.categoryId);
+                                            const isCategoryMissing = !row.categoryId;
+                                            const hasSubOptions = rowCategory?.descriptions && rowCategory.descriptions.length > 0;
+                                            const isSubCategoryMissing = hasSubOptions && !row.subCategoryId;
 
-                                        return (
-                                            <tr key={row.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 ${!row.isSelected ? 'opacity-50 grayscale' : ''}`}>
-                                                <td className="p-3 text-center align-middle">
-                                                    <button onClick={() => toggleImportRowSelection(row.id)} className="text-pnr-purple">
-                                                        {row.isSelected ? <CheckSquare size={16} /> : <Square size={16} className="text-slate-300" />}
-                                                    </button>
-                                                </td>
-                                                <td className="p-3 font-mono text-slate-600 dark:text-slate-300 align-middle">{row.date}</td>
-                                                <td className="p-3 text-slate-900 dark:text-white align-middle truncate max-w-[200px]" title={row.description}>
-                                                    {row.description}
-                                                </td>
-                                                <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-blue-600'}`}>
-                                                    {row.type === 'expense' ? '-' : ''}{formatCurrency(row.amount)}
-                                                </td>
-                                                <td className="p-2 align-middle">
-                                                    <select
-                                                        className={`w-full border rounded p-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-offset-1 ${row.type === 'income'
-                                                            ? 'bg-green-50 text-green-700 border-green-200 focus:ring-green-500'
-                                                            : 'bg-red-50 text-red-700 border-red-200 focus:ring-red-500'
-                                                            }`}
-                                                        value={row.type}
-                                                        onChange={(e) => updateImportRow(row.id, 'type', e.target.value as 'income' | 'expense')}
-                                                    >
-                                                        <option value="income">Gelir (+)</option>
-                                                        <option value="expense">Gider (-)</option>
-                                                    </select>
-                                                </td>
-                                                {/* Category Select */}
-                                                <td className="p-2 align-middle">
-                                                    <select
-                                                        className={`w-full bg-white dark:bg-slate-800 border rounded p-1.5 focus:ring-1 focus:ring-pnr-purple ${isCategoryMissing ? 'border-red-500 bg-red-50 dark:bg-red-900/10' : 'border-slate-200 dark:border-slate-700'
-                                                            }`}
-                                                        value={row.categoryId}
-                                                        onChange={(e) => updateImportRow(row.id, 'categoryId', e.target.value)}
-                                                    >
-                                                        <option value="">Seçiniz...</option>
-                                                        {categories.filter(c => c.type === row.type).map(c => (
-                                                            <option key={c.id} value={c.id}>{c.title}</option>
-                                                        ))}
-                                                    </select>
-                                                </td>
-                                                {/* Sub Category Select */}
-                                                <td className="p-2 align-middle">
-                                                    <select
-                                                        className={`w-full bg-white dark:bg-slate-800 border rounded p-1.5 focus:ring-1 focus:ring-pnr-purple ${isSubCategoryMissing ? 'border-red-500 bg-red-50 dark:bg-red-900/10' : 'border-slate-200 dark:border-slate-700'
-                                                            }`}
-                                                        value={row.subCategoryId}
-                                                        onChange={(e) => updateImportRow(row.id, 'subCategoryId', e.target.value)}
-                                                        disabled={!row.categoryId}
-                                                    >
-                                                        <option value="">Seçiniz...</option>
-                                                        {rowCategory?.descriptions.map(d => (
-                                                            <option key={d.id} value={d.id}>{d.description}</option>
-                                                        ))}
-                                                    </select>
-                                                </td>
-                                                {/* Month Select */}
-                                                <td className="p-2 align-middle">
-                                                    <select
-                                                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5"
-                                                        value={row.targetMonth}
-                                                        onChange={(e) => updateImportRow(row.id, 'targetMonth', parseInt(e.target.value))}
-                                                    >
-                                                        {MONTH_NAMES.map((m, i) => <option key={i} value={i}>{m}</option>)}
-                                                    </select>
-                                                </td>
-                                                {/* Year Select */}
-                                                <td className="p-2 align-middle">
-                                                    <select
-                                                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5"
-                                                        value={row.targetYear}
-                                                        onChange={(e) => updateImportRow(row.id, 'targetYear', parseInt(e.target.value))}
-                                                    >
-                                                        {getYearsList().map(y => <option key={y} value={y}>{y}</option>)}
-                                                    </select>
-                                                </td>
-                                                {/* Installments */}
-                                                <td className="p-2 align-middle text-center">
-                                                    <input
-                                                        type="number"
-                                                        min="1" max="24"
-                                                        className="w-12 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5 text-center"
-                                                        value={row.installments}
-                                                        onChange={(e) => updateImportRow(row.id, 'installments', parseInt(e.target.value))}
-                                                    />
-                                                </td>
-                                            </tr>
-                                        )
-                                    })}
+                                            return (
+                                                <tr key={row.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 ${!row.isSelected ? 'opacity-50 grayscale' : ''}`}>
+                                                    <td className="p-3 text-center align-middle">
+                                                        <button onClick={() => toggleImportRowSelection(row.id)} className="text-pnr-purple">
+                                                            {row.isSelected ? <CheckSquare size={16} /> : <Square size={16} className="text-slate-300" />}
+                                                        </button>
+                                                    </td>
+                                                    <td className="p-3 font-mono text-slate-600 dark:text-slate-300 align-middle">{row.date}</td>
+                                                    <td className="p-3 text-slate-900 dark:text-white align-middle truncate max-w-[200px]" title={row.description}>
+                                                        {row.description}
+                                                    </td>
+                                                    <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-blue-600'}`}>
+                                                        {row.type === 'expense' ? '-' : ''}{formatCurrency(row.amount)}
+                                                    </td>
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className={`w-full border rounded p-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-offset-1 ${row.type === 'income'
+                                                                ? 'bg-green-50 text-green-700 border-green-200 focus:ring-green-500'
+                                                                : 'bg-red-50 text-red-700 border-red-200 focus:ring-red-500'
+                                                                }`}
+                                                            value={row.type}
+                                                            onChange={(e) => updateImportRow(row.id, 'type', e.target.value as 'income' | 'expense')}
+                                                        >
+                                                            <option value="income">Gelir (+)</option>
+                                                            <option value="expense">Gider (-)</option>
+                                                        </select>
+                                                    </td>
+                                                    {/* Category Select */}
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className={`w-full bg-white dark:bg-slate-800 border rounded p-1.5 focus:ring-1 focus:ring-pnr-purple ${isCategoryMissing ? 'border-red-500 bg-red-50 dark:bg-red-900/10' : 'border-slate-200 dark:border-slate-700'
+                                                                }`}
+                                                            value={row.categoryId}
+                                                            onChange={(e) => updateImportRow(row.id, 'categoryId', e.target.value)}
+                                                        >
+                                                            <option value="">Seçiniz...</option>
+                                                            {categories.filter(c => c.type === row.type).map(c => (
+                                                                <option key={c.id} value={c.id}>{c.title}</option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
+                                                    {/* Sub Category Select */}
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className={`w-full bg-white dark:bg-slate-800 border rounded p-1.5 focus:ring-1 focus:ring-pnr-purple ${isSubCategoryMissing ? 'border-red-500 bg-red-50 dark:bg-red-900/10' : 'border-slate-200 dark:border-slate-700'
+                                                                }`}
+                                                            value={row.subCategoryId}
+                                                            onChange={(e) => updateImportRow(row.id, 'subCategoryId', e.target.value)}
+                                                            disabled={!row.categoryId}
+                                                        >
+                                                            <option value="">Seçiniz...</option>
+                                                            {rowCategory?.descriptions.map(d => (
+                                                                <option key={d.id} value={d.id}>{d.description}</option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
+                                                    {/* Month Select */}
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5"
+                                                            value={row.targetMonth}
+                                                            onChange={(e) => updateImportRow(row.id, 'targetMonth', parseInt(e.target.value))}
+                                                        >
+                                                            {MONTH_NAMES.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                                                        </select>
+                                                    </td>
+                                                    {/* Year Select */}
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5"
+                                                            value={row.targetYear}
+                                                            onChange={(e) => updateImportRow(row.id, 'targetYear', parseInt(e.target.value))}
+                                                        >
+                                                            {getYearsList().map(y => <option key={y} value={y}>{y}</option>)}
+                                                        </select>
+                                                    </td>
+                                                    {/* Installments */}
+                                                    <td className="p-2 align-middle text-center">
+                                                        <input
+                                                            type="number"
+                                                            min="1" max="24"
+                                                            className="w-12 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5 text-center"
+                                                            value={row.installments}
+                                                            onChange={(e) => updateImportRow(row.id, 'installments', parseInt(e.target.value))}
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })}
                                 </tbody>
                             </table>
                         </div>
