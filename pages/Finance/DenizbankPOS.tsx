@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Plus, CreditCard, TrendingUp, TrendingDown, Search,
+    ChevronLeft, ChevronRight, Plus, CreditCard, TrendingUp, TrendingDown, Search,
     Save, Upload, CheckSquare, Square, Trash2,
-    FileText, Landmark, RefreshCcw, EyeOff, FileText as FileIcon, X
+    FileText, Landmark, RefreshCcw, EyeOff, FileText as FileIcon, X, Download, Clock, Tag
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import * as XLSX from 'xlsx';
@@ -52,6 +52,7 @@ interface ImportedRow {
     targetMonth: number; // 0-11
     targetYear: number;
     installments: number;
+    installmentInfo?: string;
 }
 
 const MONTH_NAMES = [
@@ -64,11 +65,14 @@ interface DenizbankPOSProps {
 }
 
 const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
+    const [currentDate, setCurrentDate] = useState(new Date());
     const [records, setRecords] = useState<BankRecord[]>([]);
     const [categories, setCategories] = useState<CategoryOption[]>([]);
     const [automationRules, setAutomationRules] = useState<AutomationRule[]>([]);
+    const [openingBalance, setOpeningBalance] = useState(0);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
     // Modals
     const [isManualModalOpen, setIsManualModalOpen] = useState(false);
@@ -88,8 +92,11 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         date: new Date().toISOString().split('T')[0],
         type: 'income' as 'income' | 'expense',
         categoryId: '',
+        subCategoryId: '',
         amount: '',
-        description: ''
+        targetMonth: new Date().getMonth(),
+        targetYear: new Date().getFullYear(),
+        installments: 1
     });
 
     // --- Helpers ---
@@ -110,9 +117,30 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         return [currentYear - 1, currentYear, currentYear + 1];
     };
 
+    const handleCategoryChange = (catId: string) => {
+        setFormData(prev => ({ ...prev, categoryId: catId, subCategoryId: '' }));
+    };
+
+    const handleDateInput = (val: string) => {
+        const d = new Date(val);
+        if (!isNaN(d.getTime())) {
+            setFormData(prev => ({
+                ...prev,
+                date: val,
+                targetMonth: d.getMonth(),
+                targetYear: d.getFullYear()
+            }));
+        } else {
+            setFormData(prev => ({ ...prev, date: val }));
+        }
+    };
+
     // --- Data Fetching ---
     const fetchData = async () => {
         setLoading(true);
+        const startOfYear = new Date(currentDate.getFullYear(), 0, 1).toISOString();
+        const endOfYear = new Date(currentDate.getFullYear(), 11, 31, 23, 59, 59).toISOString();
+
         try {
             // 1. Fetch Categories with Descriptions
             const { data: catData, error: catError } = await supabase
@@ -144,10 +172,25 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             const { data: ruleData } = await supabase.from('category_automation_rules').select('*');
             setAutomationRules(ruleData || []);
 
-            // 3. Fetch All Transactions from POS Book
+            let calculatedOpening = 0;
+            const { data: allPrevRecords } = await supabase
+                .from('denizbank_pos_book')
+                .select('amount, type')
+                .lt('date', startOfYear);
+
+            if (allPrevRecords) {
+                calculatedOpening = allPrevRecords.reduce((acc, curr) => {
+                    return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
+                }, 0);
+            }
+            setOpeningBalance(calculatedOpening);
+
+            // 3. Fetch Selected Year Transactions from POS Book
             const { data: recordData, error } = await supabase
                 .from('denizbank_pos_book')
                 .select('*')
+                .gte('date', startOfYear)
+                .lte('date', endOfYear)
                 .order('date', { ascending: false });
 
             if (error) throw error;
@@ -162,7 +205,21 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [currentDate.getFullYear()]);
+
+    const handlePrevYear = () => {
+        const newDate = new Date(currentDate);
+        newDate.setFullYear(newDate.getFullYear() - 1);
+        setCurrentDate(newDate);
+        setSelectedIds(new Set());
+    };
+
+    const handleNextYear = () => {
+        const newDate = new Date(currentDate);
+        newDate.setFullYear(newDate.getFullYear() + 1);
+        setCurrentDate(newDate);
+        setSelectedIds(new Set());
+    };
 
     // --- Excel Parsing Logic ---
 
@@ -229,6 +286,11 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                     let descIdx = -1;
                     let amountIdx = -1;
                     let bakiyeIdx = -1;
+                    let typeIdx = -1;
+                    let categoryIdx = -1;
+                    let subCategoryIdx = -1;
+                    let periodIdx = -1;
+                    let installmentIdx = -1;
 
                     // Header Detection with strict blacklists
                     for (let i = 0; i < Math.min(data.length, 15); i++) {
@@ -239,6 +301,11 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
                             if (normalized.includes('tarih')) dateIdx = idx;
                             if (normalized.includes('açıklama') || normalized.includes('aciklama')) descIdx = idx;
+                            if (normalized === 'tip' || normalized === 'tür' || normalized === 'tur') typeIdx = idx;
+                            if (normalized === 'kategori') categoryIdx = idx;
+                            if (normalized.includes('alt kategori')) subCategoryIdx = idx;
+                            if (normalized === 'dönem' || normalized === 'donem') periodIdx = idx;
+                            if (normalized.includes('taksit')) installmentIdx = idx;
 
                             const isBakiye = normalized.includes('bakıye') || normalized.includes('bakiye') || normalized.includes('güncel') || normalized.includes('guncel');
 
@@ -270,9 +337,20 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                         if (rawDate instanceof Date) {
                             dateObj = rawDate;
                             isoDate = rawDate.toISOString().split('T')[0];
+                        } else if (typeof rawDate === 'number') {
+                            const parsedDate = XLSX.SSF.parse_date_code(rawDate);
+                            if (parsedDate) {
+                                dateObj = new Date(Date.UTC(parsedDate.y, parsedDate.m - 1, parsedDate.d));
+                                isoDate = dateObj.toISOString().split('T')[0];
+                            }
                         } else if (typeof rawDate === 'string') {
+                            const isoMatch = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                            if (isoMatch) {
+                                isoDate = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+                                dateObj = new Date(isoDate);
+                            }
                             const dateMatch = rawDate.match(/(\d{2})[./-](\d{2})[./-](\d{4})/);
-                            if (dateMatch) {
+                            if (!isoDate && dateMatch) {
                                 const [_, d, m, y] = dateMatch;
                                 isoDate = `${y}-${m}-${d}`;
                                 dateObj = new Date(isoDate);
@@ -290,7 +368,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
                         if (!amountFound) {
                             for (let i = row.length - 1; i >= 0; i--) {
-                                if (i === dateCellIndex || i === bakiyeIdx || i === descIdx) continue;
+                                if ([dateCellIndex, bakiyeIdx, descIdx, typeIdx, categoryIdx, subCategoryIdx, periodIdx, installmentIdx].includes(i)) continue;
                                 const val = parseTurkishAmount(row[i]);
                                 if (val !== 0) {
                                     amount = val;
@@ -301,7 +379,10 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                         }
 
                         let desc = '';
-                        if (descIdx !== -1 && row[descIdx]) {
+                        if (subCategoryIdx !== -1 && row[subCategoryIdx]) {
+                            const periodText = periodIdx !== -1 && row[periodIdx] ? String(row[periodIdx]).trim() : '';
+                            desc = [String(row[subCategoryIdx]).trim(), periodText].filter(Boolean).join(' - ');
+                        } else if (descIdx !== -1 && row[descIdx]) {
                             desc = row[descIdx];
                         } else {
                             let maxLength = 0;
@@ -316,11 +397,24 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                         }
 
                         if (amountFound && amount !== 0) {
-                            const type = amount > 0 ? 'income' : 'expense';
+                            const typeText = typeIdx !== -1 && row[typeIdx] ? String(row[typeIdx]).toLocaleLowerCase('tr-TR') : '';
+                            const type: 'income' | 'expense' = typeText.includes('gider') || typeText.includes('expense')
+                                ? 'expense'
+                                : typeText.includes('gelir') || typeText.includes('income')
+                                    ? 'income'
+                                    : amount > 0 ? 'income' : 'expense';
 
                             // POS Auto-detection logic
                             let detectedCategoryId = '';
                             let detectedSubCategoryId = '';
+
+                            const categoryTitle = categoryIdx !== -1 && row[categoryIdx] ? String(row[categoryIdx]).trim() : '';
+                            const matchedCategory = categoryTitle ? categories.find(c => c.title === categoryTitle && c.type === type) : undefined;
+                            if (matchedCategory) {
+                                detectedCategoryId = matchedCategory.id;
+                                const subCategoryTitle = subCategoryIdx !== -1 && row[subCategoryIdx] ? String(row[subCategoryIdx]).trim() : '';
+                                detectedSubCategoryId = matchedCategory.descriptions.find(d => d.description === subCategoryTitle)?.id || '';
+                            }
 
                             const normDesc = desc.toLocaleUpperCase('tr-TR');
 
@@ -329,10 +423,21 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                 normDesc.includes(rule.keyword.toLocaleUpperCase('tr-TR'))
                             );
 
-                            if (matchedRule) {
+                            if (!detectedCategoryId && matchedRule) {
                                 detectedCategoryId = matchedRule.category_id;
                                 detectedSubCategoryId = matchedRule.sub_category_id || '';
                                 console.log(`[Automation Match] Keyword: "${matchedRule.keyword}" -> Desc: "${desc}"`);
+                            }
+
+                            let targetMonth = isNaN(dateObj.getTime()) ? new Date().getMonth() : dateObj.getMonth();
+                            let targetYear = isNaN(dateObj.getTime()) ? new Date().getFullYear() : dateObj.getFullYear();
+                            const periodText = periodIdx !== -1 && row[periodIdx] ? String(row[periodIdx]).trim() : '';
+                            if (periodText) {
+                                const periodParts = periodText.split(/\s+/);
+                                const monthIndex = MONTH_NAMES.findIndex(m => m.toLocaleLowerCase('tr-TR') === (periodParts[0] || '').toLocaleLowerCase('tr-TR'));
+                                const yearValue = parseInt(periodParts[1]);
+                                if (monthIndex !== -1) targetMonth = monthIndex;
+                                if (!isNaN(yearValue)) targetYear = yearValue;
                             }
 
                             parsedRows.push({
@@ -344,9 +449,10 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                 isSelected: true,
                                 categoryId: detectedCategoryId,
                                 subCategoryId: detectedSubCategoryId,
-                                targetMonth: isNaN(dateObj.getTime()) ? new Date().getMonth() : dateObj.getMonth(),
-                                targetYear: isNaN(dateObj.getTime()) ? new Date().getFullYear() : dateObj.getFullYear(),
-                                installments: 1
+                                targetMonth,
+                                targetYear,
+                                installments: 1,
+                                installmentInfo: installmentIdx !== -1 && row[installmentIdx] ? String(row[installmentIdx]).trim() : undefined
                             });
                         }
                     });
@@ -444,9 +550,13 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
                     const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
 
-                    let finalDesc = `${row.description}`;
-                    if (subCategory) finalDesc += ` - ${subCategory.description}`;
-                    finalDesc += ` - ${periodString}`;
+                    let finalDesc = row.description || '';
+                    if (subCategory && !finalDesc.includes(subCategory.description)) {
+                        finalDesc += `${finalDesc ? ' - ' : ''}${subCategory.description}`;
+                    }
+                    if (!finalDesc.includes(periodString)) {
+                        finalDesc += `${finalDesc ? ' - ' : ''}${periodString}`;
+                    }
 
                     let installmentAmount = baseAmount;
                     if (i === installments - 1) {
@@ -460,7 +570,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                         type: row.type,
                         category_id: row.categoryId,
                         category_name: catName,
-                        installment_info: installments > 1 ? `${i + 1}/${installments}` : null
+                        installment_info: row.installmentInfo || (installments > 1 ? `${i + 1}/${installments}` : null)
                     });
                 }
             });
@@ -488,24 +598,60 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         setLoading(true);
         try {
             const cat = categories.find(c => c.id === formData.categoryId);
-            const { error } = await supabase.from('denizbank_pos_book').insert({
-                date: formData.date,
-                type: formData.type,
-                category_id: formData.categoryId,
-                category_name: cat?.title || '',
-                amount: parseTurkishAmount(formData.amount),
-                description: formData.description
-            });
+            const subCategory = cat?.descriptions.find(d => d.id === formData.subCategoryId);
+
+            if (cat && cat.descriptions.length > 0 && !formData.subCategoryId) {
+                alert('Lütfen alt kategori seçiniz.');
+                return;
+            }
+
+            const dbRows: any[] = [];
+            const transDay = new Date(formData.date).getDate();
+            const totalAmount = Math.abs(parseTurkishAmount(formData.amount));
+            const installments = Math.max(1, formData.installments);
+            const baseAmount = Math.floor((totalAmount / installments) * 100) / 100;
+            const remainder = Number((totalAmount - (baseAmount * installments)).toFixed(2));
+
+            for (let i = 0; i < installments; i++) {
+                let targetY = formData.targetYear;
+                let targetM = formData.targetMonth + i;
+
+                targetY += Math.floor(targetM / 12);
+                targetM = targetM % 12;
+
+                const daysInMonth = new Date(targetY, targetM + 1, 0).getDate();
+                const finalDay = Math.min(transDay, daysInMonth);
+                const recordDate = new Date(Date.UTC(targetY, targetM, finalDay));
+                const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
+                const description = `${subCategory?.description || 'Genel'} - ${periodString}`;
+                const amount = i === installments - 1 ? baseAmount + remainder : baseAmount;
+
+                dbRows.push({
+                    date: recordDate.toISOString().split('T')[0],
+                    type: formData.type,
+                    category_id: formData.categoryId,
+                    category_name: cat?.title || '',
+                    amount: Number(amount.toFixed(2)),
+                    description,
+                    installment_info: installments > 1 ? `${i + 1}/${installments}` : null
+                });
+            }
+
+            const { error } = await supabase.from('denizbank_pos_book').insert(dbRows);
 
             if (error) throw error;
 
             setIsManualModalOpen(false);
+            const today = new Date();
             setFormData({
-                date: new Date().toISOString().split('T')[0],
+                date: today.toISOString().split('T')[0],
                 type: 'income',
                 categoryId: '',
+                subCategoryId: '',
                 amount: '',
-                description: ''
+                targetMonth: today.getMonth(),
+                targetYear: today.getFullYear(),
+                installments: 1
             });
             fetchData();
 
@@ -522,37 +668,136 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             const { error } = await supabase.from('denizbank_pos_book').delete().eq('id', id);
             if (error) throw error;
             setRecords(prev => prev.filter(r => r.id !== id));
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+            });
         } catch (err: any) {
             alert("Silinemedi: " + err.message);
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.size === filteredRecords.length && filteredRecords.length > 0) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(filteredRecords.map(r => r.id)));
+        }
+    };
+
+    const toggleSelectRecord = (id: string) => {
+        const newSelected = new Set(selectedIds);
+        if (newSelected.has(id)) {
+            newSelected.delete(id);
+        } else {
+            newSelected.add(id);
+        }
+        setSelectedIds(newSelected);
+    };
+
+    const handleBulkDelete = async () => {
+        if (!canEdit || selectedIds.size === 0) return;
+        if (!window.confirm(`${selectedIds.size} adet kaydı silmek istediğinize emin misiniz?`)) return;
+
+        setLoading(true);
+        try {
+            const ids = Array.from(selectedIds);
+            const { error } = await supabase.from('denizbank_pos_book').delete().in('id', ids);
+            if (error) throw error;
+            setRecords(prev => prev.filter(r => !selectedIds.has(r.id)));
+            setSelectedIds(new Set());
+        } catch (err: any) {
+            alert("Toplu silme hatası: " + err.message);
+        } finally {
+            setLoading(false);
         }
     };
 
     // Stats
     const totalIncome = records.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
     const totalExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
-    const balance = totalIncome - totalExpense;
+    const balance = openingBalance + totalIncome - totalExpense;
 
     const filteredRecords = records.filter(r =>
         r.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
         r.category_name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    const selectedCategory = categories.find(c => c.id === formData.categoryId);
+
+    let runningBalance = openingBalance;
+    const balanceByRecordId = new Map<string, number>();
+    [...filteredRecords]
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .forEach(record => {
+            runningBalance += record.type === 'income' ? record.amount : -record.amount;
+            balanceByRecordId.set(record.id, runningBalance);
+        });
+
+    const displayedRecords = [...filteredRecords]
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    const handleDownloadExcel = () => {
+        const exportRows = filteredRecords.map(record => {
+            const descriptionParts = record.description ? record.description.split(' - ') : [];
+            const subCategoryDisplay = descriptionParts[0] || '';
+            const periodDisplay = descriptionParts.length > 1 ? descriptionParts.slice(-1)[0] : '';
+
+            return {
+                Tarih: record.date,
+                Kategori: record.category_name,
+                'Alt Kategori': subCategoryDisplay,
+                Dönem: periodDisplay,
+                Taksit: record.installment_info || '',
+                Tutar: record.type === 'income' ? record.amount : -record.amount,
+                Bakiye: balanceByRecordId.get(record.id) ?? 0,
+                İşlem: ''
+            };
+        });
+
+        const worksheet = XLSX.utils.json_to_sheet(exportRows);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Denizbank POS');
+        XLSX.writeFile(workbook, `denizbank-pos-${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     return (
         <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6">
 
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white dark:bg-pnr-card p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 <div className="flex items-center gap-3">
                     <div className="p-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl border border-slate-200 dark:border-slate-700">
                         <CreditCard size={32} />
                     </div>
                     <div>
                         <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white tracking-tight font-display">Denizbank POS</h1>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">POS cihazı hareketleri ve gün sonu raporları.</p>
                     </div>
                 </div>
 
-                <div className="flex flex-wrap gap-3">
+                <div className="flex items-center gap-4">
+                    <button onClick={handlePrevYear} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                        <ChevronLeft size={22} className="text-slate-600 dark:text-slate-300" />
+                    </button>
+                    <div className="text-center min-w-24">
+                        <h2 className="text-lg font-bold text-slate-900 dark:text-white">{currentDate.getFullYear()} Yılı</h2>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Denizbank POS</p>
+                    </div>
+                    <button onClick={handleNextYear} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                        <ChevronRight size={22} className="text-slate-600 dark:text-slate-300" />
+                    </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="text-right hidden md:block">
+                        <div className="text-xs text-slate-500 uppercase font-bold">Devreden Bakiye</div>
+                        <div className={`font-mono font-bold ${openingBalance >= 0 ? 'text-slate-700 dark:text-slate-300' : 'text-red-600'}`}>
+                            {formatCurrency(openingBalance)}
+                        </div>
+                    </div>
+                    <div className="h-8 w-px bg-slate-200 dark:bg-slate-700 hidden md:block"></div>
+
                     {/* Hidden File Input */}
                     <input
                         type="file"
@@ -562,12 +807,30 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                         onChange={handleFileUpload}
                     />
 
+                    <button
+                        onClick={handleDownloadExcel}
+                        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm"
+                    >
+                        <Download size={18} /> Excel İndir
+                    </button>
+
+                    {canEdit && (
+                        selectedIds.size > 0 && (
+                            <button
+                                onClick={handleBulkDelete}
+                                className="bg-red-500 hover:bg-red-600 text-white px-4 py-2.5 rounded-xl font-bold shadow-lg shadow-red-500/20 flex items-center gap-2 transition-transform active:scale-95"
+                            >
+                                <Trash2 size={18} /> {selectedIds.size} Kaydı Sil
+                            </button>
+                        )
+                    )}
+
                     {canEdit && (
                         <button
                             onClick={() => fileInputRef.current?.click()}
                             className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm"
                         >
-                            <Upload size={18} /> Excel / CSV Yükle
+                            <Upload size={18} /> Excel Yükle
                         </button>
                     )}
 
@@ -576,7 +839,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                             onClick={() => setIsManualModalOpen(true)}
                             className="bg-pnr-purple hover:bg-pnr-indigo text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-pnr-purple/20 flex items-center gap-2 transition-transform active:scale-95"
                         >
-                            <Plus size={20} /> Manuel Ekle
+                            <Plus size={20} /> Yeni Kayıt
                         </button>
                     )}
                 </div>
@@ -624,53 +887,114 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                     <div className="p-12 text-center text-slate-500">Yükleniyor...</div>
                 ) : (
                     <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse min-w-[800px]">
+                        <table className="w-full text-left border-collapse table-fixed min-w-[1180px]">
+                            <colgroup>
+                                <col className="w-12" />
+                                <col className="w-40" />
+                                <col className="w-44" />
+                                <col className="w-56" />
+                                <col className="w-36" />
+                                <col className="w-24" />
+                                <col className="w-36" />
+                                <col className="w-36" />
+                                <col className="w-24" />
+                            </colgroup>
                             <thead>
                                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-500 uppercase">
-                                    <th className="p-4 w-32">Tarih</th>
-                                    <th className="p-4">Açıklama</th>
+                                    <th className="p-4">
+                                        <input
+                                            type="checkbox"
+                                            className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
+                                            checked={selectedIds.size === filteredRecords.length && filteredRecords.length > 0}
+                                            onChange={toggleSelectAll}
+                                        />
+                                    </th>
+                                    <th className="p-4">Tarih</th>
                                     <th className="p-4">Kategori</th>
+                                    <th className="p-4">Alt Kategori</th>
+                                    <th className="p-4">Dönem</th>
                                     <th className="p-4 text-center">Taksit</th>
-                                    <th className="p-4 text-right w-40">Tutar</th>
-                                    <th className="p-4 w-16"></th>
+                                    <th className="p-4 text-right">Tutar</th>
+                                    <th className="p-4 text-right">Bakiye</th>
+                                    <th className="p-4 text-center">İşlem</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                <tr className="bg-slate-50/50 dark:bg-slate-900/30 italic text-slate-500">
+                                    <td className="p-4"></td>
+                                    <td className="p-4 text-xs" colSpan={6}>Devreden Bakiye</td>
+                                    <td className="p-4 text-sm font-mono font-bold text-right">{formatCurrency(openingBalance)}</td>
+                                    <td className="p-4"></td>
+                                </tr>
+
                                 {filteredRecords.length > 0 ? (
-                                    filteredRecords.map((record) => (
-                                        <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                                            <td className="p-4 text-sm text-slate-600 dark:text-slate-300 font-mono">
-                                                {formatDate(record.date)}
-                                            </td>
-                                            <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
-                                                {record.description}
-                                            </td>
-                                            <td className="p-4">
-                                                <span className="inline-flex items-center px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300">
-                                                    {record.category_name}
-                                                </span>
-                                            </td>
-                                            <td className="p-4 text-center text-xs text-slate-500">
-                                                {record.installment_info || '-'}
-                                            </td>
-                                            <td className={`p-4 text-right font-bold text-sm ${record.type === 'income' ? 'text-blue-600' : 'text-red-600'}`}>
-                                                {record.type === 'income' ? '' : '-'}{formatCurrency(record.amount)}
-                                            </td>
-                                            <td className="p-4 text-center">
-                                                {canEdit && (
-                                                    <button
-                                                        onClick={() => handleDelete(record.id)}
-                                                        className="text-slate-300 hover:text-red-500 transition-colors"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))
+                                    displayedRecords.map((record, index) => {
+                                        const isIncome = record.type === 'income';
+                                        const descriptionParts = record.description ? record.description.split(' - ') : [];
+                                        const subCategoryDisplay = descriptionParts[0] || '-';
+                                        const periodDisplay = descriptionParts.length > 1 ? descriptionParts.slice(-1)[0] : '-';
+                                        const rowBalance = balanceByRecordId.get(record.id) ?? 0;
+                                        const currentDateObj = new Date(record.date);
+                                        const currentMonth = currentDateObj.getMonth();
+                                        const previousRecord = displayedRecords[index - 1];
+                                        const previousDateObj = previousRecord ? new Date(previousRecord.date) : null;
+                                        const isLatestMonthRow = !searchTerm && (!previousDateObj || previousDateObj.getMonth() !== currentMonth || previousDateObj.getFullYear() !== currentDateObj.getFullYear());
+
+                                        return (
+                                            <React.Fragment key={record.id}>
+                                                <tr className={`transition-colors ${selectedIds.has(record.id) ? 'bg-blue-50/50 dark:bg-blue-900/10' : isLatestMonthRow ? 'bg-slate-100 dark:bg-slate-800/70 border-l-4 border-l-slate-400 dark:border-l-slate-500' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
+                                                    <td className="p-4">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
+                                                            checked={selectedIds.has(record.id)}
+                                                            onChange={() => toggleSelectRecord(record.id)}
+                                                        />
+                                                    </td>
+                                                    <td className="p-4 text-sm text-slate-600 dark:text-slate-300 font-mono">
+                                                        {formatDate(record.date)}
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <span className={`text-xs px-2 py-1 rounded border ${isIncome
+                                                            ? 'bg-green-50 text-green-700 border-green-200'
+                                                            : 'bg-red-50 text-red-700 border-red-200'
+                                                            }`}>
+                                                            {record.category_name}
+                                                        </span>
+                                                    </td>
+                                                    <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
+                                                        {subCategoryDisplay}
+                                                    </td>
+                                                    <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
+                                                        {periodDisplay}
+                                                    </td>
+                                                    <td className="p-4 text-center text-xs text-slate-500">
+                                                        {record.installment_info || '-'}
+                                                    </td>
+                                                    <td className={`p-4 text-right font-bold text-sm ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
+                                                        {isIncome ? '+' : '-'}{formatCurrency(record.amount)}
+                                                    </td>
+                                                    <td className="p-4 text-right font-mono text-sm font-extrabold text-slate-900 dark:text-white">
+                                                        {formatCurrency(rowBalance)}
+                                                    </td>
+                                                    <td className="p-4 text-center">
+                                                        {canEdit && (
+                                                            <button
+                                                                onClick={() => handleDelete(record.id)}
+                                                                className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-all"
+                                                                title="Kaydı Sil"
+                                                            >
+                                                                <Trash2 size={18} />
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            </React.Fragment>
+                                        );
+                                    })
                                 ) : (
                                     <tr>
-                                        <td colSpan={6} className="p-8 text-center text-slate-400 text-sm">
+                                        <td colSpan={9} className="p-8 text-center text-slate-400 text-sm">
                                             Kayıt bulunamadı.
                                         </td>
                                     </tr>
@@ -890,80 +1214,149 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             {/* MANUAL ADD MODAL */}
             {isManualModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-pnr-card w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
-                        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
-                            <h3 className="font-bold text-lg text-slate-900 dark:text-white">Manuel İşlem Ekle</h3>
-                            <button onClick={() => setIsManualModalOpen(false)}><X size={20} className="text-slate-400" /></button>
+                    <div className="bg-white dark:bg-pnr-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
+                        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
+                            <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
+                                <CreditCard size={20} className="text-pnr-purple" /> Yeni Denizbank POS Kaydı
+                            </h3>
+                            <button onClick={() => setIsManualModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-900" /></button>
                         </div>
-                        <form onSubmit={handleManualSave} className="p-5 space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
+                        <form onSubmit={handleManualSave} className="p-6 space-y-4">
+                            <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, type: 'income', categoryId: '', subCategoryId: '' })}
+                                    className={`py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${formData.type === 'income' ? 'bg-white dark:bg-slate-700 text-green-600 shadow-sm' : 'text-slate-500'}`}
+                                >
+                                    <TrendingUp size={16} /> Gelir
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, type: 'expense', categoryId: '', subCategoryId: '' })}
+                                    className={`py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${formData.type === 'expense' ? 'bg-white dark:bg-slate-700 text-red-600 shadow-sm' : 'text-slate-500'}`}
+                                >
+                                    <TrendingDown size={16} /> Gider
+                                </button>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tarih</label>
+                                <input
+                                    type="date"
+                                    required
+                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
+                                    value={formData.date}
+                                    onChange={(e) => handleDateInput(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tarih</label>
-                                    <input
-                                        type="date"
-                                        required
-                                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
-                                        value={formData.date}
-                                        onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                                    />
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                                        <Clock size={12} /> Ait Olduğu Ay
+                                    </label>
+                                    <select
+                                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
+                                        value={formData.targetMonth}
+                                        onChange={(e) => setFormData({ ...formData, targetMonth: parseInt(e.target.value) })}
+                                    >
+                                        {MONTH_NAMES.map((m: string, i: number) => (
+                                            <option key={i} value={i}>{m}</option>
+                                        ))}
+                                    </select>
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tür</label>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Yıl</label>
                                     <select
-                                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
-                                        value={formData.type}
-                                        onChange={(e) => setFormData({ ...formData, type: e.target.value as any, categoryId: '' })}
+                                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
+                                        value={formData.targetYear}
+                                        onChange={(e) => setFormData({ ...formData, targetYear: parseInt(e.target.value) })}
                                     >
-                                        <option value="income">Gelir (+)</option>
-                                        <option value="expense">Gider (-)</option>
+                                        {getYearsList().map(y => (
+                                            <option key={y} value={y}>{y}</option>
+                                        ))}
                                     </select>
                                 </div>
                             </div>
 
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Kategori</label>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                                    {formData.type === 'income' ? 'Gelir Kategorisi' : 'Gider Kategorisi'}
+                                </label>
                                 <select
                                     required
-                                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
+                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
                                     value={formData.categoryId}
-                                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                                    onChange={(e) => handleCategoryChange(e.target.value)}
                                 >
-                                    <option value="">Seçiniz...</option>
+                                    <option value="">Seçiniz</option>
                                     {categories.filter(c => c.type === formData.type).map(c => (
                                         <option key={c.id} value={c.id}>{c.title}</option>
                                     ))}
                                 </select>
                             </div>
 
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tutar</label>
-                                <div className="relative">
-                                    <input
-                                        type="text"
+                            {selectedCategory && selectedCategory.descriptions.length > 0 && (
+                                <div className="animate-in slide-in-from-top-1">
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                                        <Tag size={12} /> Alt Kategori
+                                    </label>
+                                    <select
                                         required
-                                        placeholder="0,00"
-                                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 pl-10 text-sm font-bold dark:text-white"
+                                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                                        value={formData.subCategoryId}
+                                        onChange={(e) => setFormData({ ...formData, subCategoryId: e.target.value })}
+                                    >
+                                        <option value="">Alt Kategori Seçiniz...</option>
+                                        {selectedCategory.descriptions.map(desc => (
+                                            <option key={desc.id} value={desc.id}>{desc.description}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Taksit Sayısı</label>
+                                    <div className="relative">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                                            value={formData.installments || ''}
+                                            onChange={(e) => setFormData({ ...formData, installments: parseInt(e.target.value) || 0 })}
+                                            placeholder="1"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">
+                                            {(!formData.installments || formData.installments <= 1) ? 'Tek Çekim' : 'Adet'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tutar (TL)</label>
+                                    <input
+                                        type="number"
+                                        required
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="0.00"
+                                        className={`w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm font-bold outline-none focus:ring-2 ${formData.type === 'income' ? 'text-green-600 focus:ring-green-500' : 'text-red-600 focus:ring-red-500'}`}
                                         value={formData.amount}
                                         onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                                     />
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₺</span>
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Açıklama</label>
-                                <textarea
-                                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white h-24"
-                                    placeholder="İşlem detayı..."
-                                    value={formData.description}
-                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                />
-                            </div>
+                            {formData.installments > 1 && formData.amount && (
+                                <p className="text-xs text-slate-400 text-right font-mono">
+                                    Aylık Ödeme: {formatCurrency(parseTurkishAmount(formData.amount) / formData.installments)}
+                                </p>
+                            )}
 
                             <button
                                 type="submit"
                                 disabled={loading}
-                                className="w-full bg-pnr-purple hover:bg-pnr-indigo text-white p-3 rounded-xl font-bold shadow-lg transition-transform active:scale-95"
+                                className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95 disabled:opacity-70 ${formData.type === 'income' ? 'bg-green-600 hover:bg-green-700 shadow-green-500/20' : 'bg-red-600 hover:bg-red-700 shadow-red-500/20'}`}
                             >
                                 {loading ? 'Kaydediliyor...' : 'Kaydet'}
                             </button>

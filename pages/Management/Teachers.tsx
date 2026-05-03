@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-  UserPlus, Search, ChevronDown, ChevronRight, Upload, X,
+  UserPlus, Upload, X,
   FileText, Calendar, CreditCard, GraduationCap, Phone, User,
-  Check, Download, Layers, RefreshCcw, Edit, Lock, Mail, Shield,
-  LayoutGrid, List, MapPin, Briefcase, Users
+  Check, Download, Layers, RefreshCcw, Edit, Mail, Briefcase, Users, Trash2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { UserRole } from '../../types';
@@ -47,14 +46,11 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [availableBranches, setAvailableBranches] = useState<BranchData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedRows, setExpandedRows] = useState<string[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [studentCounts, setStudentCounts] = useState<Record<string, number>>({});
 
   // Filtering & View States
-  const [searchTerm, setSearchTerm] = useState('');
   const [showPassive, setShowPassive] = useState(false);
-  const [viewMode, setViewMode] = useState<'table' | 'grid'>('grid');
 
   // --- Form State ---
   const [formData, setFormData] = useState<Partial<Teacher>>({
@@ -185,12 +181,6 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
   }, []);
 
   // --- Helpers ---
-  const toggleRow = (id: string) => {
-    setExpandedRows(prev =>
-      prev.includes(id) ? prev.filter(rowId => rowId !== id) : [...prev, id]
-    );
-  };
-
   const toggleStatus = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const teacher = teachers.find(t => t.id === id);
@@ -225,6 +215,42 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
       branches: teacher.branches
     });
     setIsModalOpen(true);
+  };
+
+  const handleDelete = async (e: React.MouseEvent, teacher: Teacher) => {
+    e.stopPropagation();
+
+    if (!confirm(`${teacher.name} adlı öğretmeni silmek istediğinize emin misiniz?`)) return;
+
+    try {
+      setLoading(true);
+
+      const { error: relationError } = await supabase
+        .from('sub_branch_teachers')
+        .delete()
+        .eq('teacher_id', teacher.id);
+
+      if (relationError) throw relationError;
+
+      const { error: teacherError } = await supabase
+        .from('teachers')
+        .delete()
+        .eq('id', teacher.id);
+
+      if (teacherError) throw teacherError;
+
+      setTeachers(prev => prev.filter(item => item.id !== teacher.id));
+      if (formData.id === teacher.id) {
+        setIsModalOpen(false);
+        setFormData({ salaryType: 'hourly', branches: [], files: [], email: '' });
+      }
+    } catch (err: any) {
+      console.error('Error deleting teacher:', err);
+      alert('Öğretmen silinemedi: ' + err.message);
+      await fetchData();
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleOpenNew = () => {
@@ -459,60 +485,17 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
   };
 
   // Filter Logic
-  const filteredTeachers = teachers.filter(t => {
-    if (!showPassive && t.status === 'passive') return false;
-
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      const matchesName = t.name.toLowerCase().includes(term);
-      const matchesBranch = t.branches.some(b =>
-        b.mainBranchName.toLowerCase().includes(term) ||
-        b.subBranchNames.some(s => s.toLowerCase().includes(term))
-      );
-      return matchesName || matchesBranch;
-    }
-    return true;
-  });
+  const filteredTeachers = teachers.filter(t => showPassive || t.status !== 'passive');
 
   return (
     <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6">
 
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white tracking-tight font-display">Öğretmen Listesi</h1>
-          <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-1">Eğitmen kadrosu, maaş ve özlük bilgileri.</p>
+          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white tracking-tight font-display">Öğretmen Kadromuz</h1>
+          <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-1">Mevcut eğitmen kadrosunu yalnızca kart görünümünde görüntüle ve yönet.</p>
         </div>
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-          <div className="relative flex-1 sm:flex-none">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={18} />
-            <input
-              type="text"
-              placeholder="İsim veya Branş ara..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full sm:w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white pl-10 pr-4 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-pnr-purple placeholder:text-slate-400 dark:placeholder:text-slate-500 h-[42px]"
-            />
-          </div>
-
-          {/* View Toggle */}
-          <div className="flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-1 h-[42px]">
-            <button
-              onClick={() => setViewMode('table')}
-              className={`flex items-center gap-2 px-3 rounded-lg transition-all ${viewMode === 'table' ? 'bg-pnr-purple text-white' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              <List size={18} />
-              <span className="hidden sm:inline text-xs font-medium">Liste</span>
-            </button>
-            <button
-              onClick={() => setViewMode('grid')}
-              className={`flex items-center gap-2 px-3 rounded-lg transition-all ${viewMode === 'grid' ? 'bg-pnr-purple text-white' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              <LayoutGrid size={18} />
-              <span className="hidden sm:inline text-xs font-medium">Kart</span>
-            </button>
-          </div>
-
           <button
             onClick={fetchData}
             className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500"
@@ -547,175 +530,7 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
         </div>
       </div>
 
-      {/* Teachers Content */}
-      {viewMode === 'table' ? (
-        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[800px]">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-                  <th className="p-4 w-12"></th>
-                  <th className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Ad Soyad</th>
-                  <th className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Branşlar</th>
-                  <th className="p-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Durum</th>
-                  <th className="p-4 w-12"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {loading && teachers.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500 dark:text-slate-400">Yükleniyor...</td>
-                  </tr>
-                ) : filteredTeachers.length > 0 ? (
-                  filteredTeachers.map((teacher) => (
-                    <React.Fragment key={teacher.id}>
-                      {/* Main Row */}
-                      <tr
-                        className={`group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer ${expandedRows.includes(teacher.id) ? 'bg-slate-50 dark:bg-slate-800/30' : ''}`}
-                        onClick={() => toggleRow(teacher.id)}
-                      >
-                        <td className="p-4 text-slate-400 dark:text-slate-500">
-                          {expandedRows.includes(teacher.id) ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                        </td>
-                        <td className="p-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 font-bold overflow-hidden shrink-0">
-                              {teacher.photo ? (
-                                <img src={teacher.photo} alt={teacher.name} className="w-full h-full object-cover" />
-                              ) : (
-                                teacher.name.charAt(0)
-                              )}
-                            </div>
-                            <span className="font-medium text-slate-900 dark:text-white">{teacher.name}</span>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          <div className="flex flex-wrap gap-2">
-                            {teacher.branches.map((b, idx) => (
-                              <span key={idx} className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 shadow-sm">
-                                <span className={`${b.mainBranchName.includes('Bale') ? 'text-pnr-purple dark:text-purple-300' : 'text-pnr-blue dark:text-blue-300'} mr-1.5`}>
-                                  {b.mainBranchName}:
-                                </span>
-                                {b.subBranchNames.join(', ')}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="p-4 text-center">
-                          <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={(e) => toggleStatus(e, teacher.id)}
-                              className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-pnr-purple ${teacher.status === 'passive' ? 'bg-slate-300 dark:bg-slate-600' : 'bg-pnr-green'
-                                }`}
-                            >
-                              <span
-                                className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform duration-200 shadow-sm ${teacher.status === 'passive' ? 'translate-x-1' : 'translate-x-6'
-                                  }`}
-                              />
-                            </button>
-                          </div>
-                          <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mt-1 block">
-                            {teacher.status === 'passive' ? 'Pasif' : 'Aktif'}
-                          </span>
-                        </td>
-                        <td className="p-4 text-center">
-                          {canEdit && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleEdit(teacher); }}
-                              className="text-slate-400 hover:text-pnr-purple transition-colors p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
-                              title="Düzenle"
-                            >
-                              <Edit size={18} />
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-
-                      {/* Detailed Expanded Row */}
-                      {expandedRows.includes(teacher.id) && (
-                        <tr className="bg-slate-50/50 dark:bg-slate-800/20">
-                          <td colSpan={5} className="p-0">
-                            <div className="p-4 md:p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 border-b border-slate-200 dark:border-slate-800 animate-in slide-in-from-top-2 duration-200">
-
-                              {/* Personal Info */}
-                              <div className="space-y-3">
-                                <h4 className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 font-semibold mb-2">Kimlik & İletişim</h4>
-                                <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                  <User size={16} className="text-slate-400" />
-                                  <span className="font-mono">{teacher.tc}</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                  <Phone size={16} className="text-slate-400" />
-                                  <span className="font-mono">{teacher.phone}</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                  <Mail size={16} className="text-slate-400" />
-                                  <span className="">{teacher.email || '-'}</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                  <Calendar size={16} className="text-slate-400" />
-                                  <span>SGK Giriş: {teacher.sgkDate || '-'}</span>
-                                </div>
-                              </div>
-
-                              {/* Education */}
-                              <div className="space-y-3">
-                                <h4 className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 font-semibold mb-2">Eğitim Bilgisi</h4>
-                                <div className="flex items-start gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                  <GraduationCap size={16} className="text-slate-400 mt-1" />
-                                  <span>{teacher.schoolInfo || '-'}</span>
-                                </div>
-                              </div>
-
-                              {/* Financial */}
-                              <div className="space-y-3">
-                                <h4 className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 font-semibold mb-2">Finansal Bilgiler</h4>
-                                <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                  <CreditCard size={16} className="text-slate-400" />
-                                  <span>
-                                    {teacher.salaryType === 'hourly' ? 'Saatlik Ücret' :
-                                      teacher.salaryType === 'monthly' ? 'Aylık Maaş' : 'Öğrenci Başı'}:
-                                    <span className="font-bold ml-1 text-pnr-purple">₺{teacher.salaryAmount?.toLocaleString() || 0}</span>
-                                  </span>
-                                </div>
-                              </div>
-
-                              {/* Files */}
-                              <div className="space-y-3">
-                                <h4 className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 font-semibold mb-2">Özlük Dosyası</h4>
-                                <div className="space-y-2">
-                                  {teacher.files && teacher.files.length > 0 ? teacher.files.map((file, i) => (
-                                    <div key={i} className="flex items-center gap-2 text-xs text-pnr-cyan hover:underline cursor-pointer">
-                                      <FileText size={14} />
-                                      {file}
-                                      <Download size={12} className="ml-auto opacity-50" />
-                                    </div>
-                                  )) : (
-                                    <span className="text-xs text-slate-400 italic">Dosya yok</span>
-                                  )}
-                                </div>
-                              </div>
-
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500 dark:text-slate-400">
-                      Kayıt bulunamadı.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : (
-        /* GRID VIEW (New Design with Large Photos) */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
           {loading && teachers.length === 0 ? (
             <div className="col-span-full p-12 text-center text-slate-500">Yükleniyor...</div>
           ) : filteredTeachers.length > 0 ? (
@@ -763,89 +578,89 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
                         <span>{studentCounts[teacher.name] || 0} Öğrenci</span>
                       </a>
 
-                      <button
-                        onClick={() => toggleRow(teacher.id)}
-                        className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${expandedRows.includes(teacher.id) ? 'text-pnr-purple bg-pnr-purple/10' : 'text-slate-400'}`}
-                      >
-                        <ChevronDown size={20} className={`transition-transform duration-300 ${expandedRows.includes(teacher.id) ? 'rotate-180' : ''}`} />
-                      </button>
-                    </div>
-
-                    {expandedRows.includes(teacher.id) && (
-                      <div className="mt-4 pt-4 border-t-2 border-slate-100 dark:border-slate-800 space-y-5 animate-in slide-in-from-top-2 duration-200">
-                        {canEdit && (
+                      {canEdit && (
+                        <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleEdit(teacher)}
-                            className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-3 rounded-xl font-bold text-base shadow-md flex items-center justify-center gap-2 hover:bg-pnr-purple dark:hover:bg-pnr-purple hover:text-white transition-all active:scale-95"
+                            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-slate-400 hover:text-pnr-purple"
+                            title="Profili düzenle"
                           >
-                            <Edit size={20} />
-                            Profili Düzenle
+                            <Edit size={18} />
                           </button>
-                        )}
+                          <button
+                            onClick={(e) => handleDelete(e, teacher)}
+                            className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-slate-400 hover:text-red-500"
+                            title="Öğretmeni sil"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
-                        <div className="grid grid-cols-1 gap-4 text-base">
-                          <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
-                            <Phone size={18} className="text-slate-400 shrink-0" />
-                            <span className="font-bold font-mono">{teacher.phone}</span>
-                          </div>
-                          <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
-                            <User size={18} className="text-slate-400 shrink-0" />
-                            <span className="font-mono">{teacher.tc}</span>
-                          </div>
-                          <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
-                            <Mail size={18} className="text-slate-400 shrink-0" />
-                            <span className="truncate">{teacher.email || '-'}</span>
-                          </div>
-                          <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
-                            <Calendar size={18} className="text-slate-400 shrink-0" />
-                            <span>SGK Giriş: <span className="font-semibold">{teacher.sgkDate || '-'}</span></span>
-                          </div>
-                          <div className="flex items-start gap-3 text-slate-700 dark:text-slate-300">
-                            <GraduationCap size={18} className="text-slate-400 mt-0.5 shrink-0" />
-                            <span className="italic">{teacher.schoolInfo || '-'}</span>
-                          </div>
-
-                          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
-                            <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
-                              <RefreshCcw size={18} className="text-slate-400 shrink-0" />
-                              <span className="font-medium">Durum</span>
-                            </div>
-                            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                onClick={(e) => toggleStatus(e, teacher.id)}
-                                className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none ${teacher.status === 'passive' ? 'bg-slate-300 dark:bg-slate-600' : 'bg-pnr-green'
-                                  }`}
-                              >
-                                <span
-                                  className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform duration-200 shadow-sm ${teacher.status === 'passive' ? 'translate-x-1' : 'translate-x-6'
-                                    }`}
-                                />
-                              </button>
-                              <span className={`text-[11px] font-bold uppercase transition-colors ${teacher.status === 'active' ? 'text-pnr-green' : 'text-slate-400'}`}>
-                                {teacher.status === 'active' ? 'Aktif' : 'Pasif'}
-                              </span>
-                            </div>
-                          </div>
+                    <div className="mt-4 pt-4 border-t-2 border-slate-100 dark:border-slate-800 space-y-5 animate-in slide-in-from-top-2 duration-200">
+                      <div className="grid grid-cols-1 gap-4 text-base">
+                        <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
+                          <Phone size={18} className="text-slate-400 shrink-0" />
+                          <span className="font-bold font-mono">{teacher.phone || '-'}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
+                          <User size={18} className="text-slate-400 shrink-0" />
+                          <span className="font-mono">{teacher.tc || '-'}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
+                          <Mail size={18} className="text-slate-400 shrink-0" />
+                          <span className="truncate">{teacher.email || '-'}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
+                          <Calendar size={18} className="text-slate-400 shrink-0" />
+                          <span>SGK Giriş: <span className="font-semibold">{teacher.sgkDate || '-'}</span></span>
+                        </div>
+                        <div className="flex items-start gap-3 text-slate-700 dark:text-slate-300">
+                          <GraduationCap size={18} className="text-slate-400 mt-0.5 shrink-0" />
+                          <span className="italic">{teacher.schoolInfo || '-'}</span>
                         </div>
 
-                        {/* Files Minimal */}
-                        <div className="space-y-2 mt-2">
-                          <h4 className="text-xs uppercase font-bold text-slate-400 tracking-wider">Dosyalar</h4>
-                          {teacher.files && teacher.files.length > 0 ? (
-                            <div className="flex flex-wrap gap-2">
-                              {teacher.files.map((file, i) => (
-                                <div key={i} className="flex items-center gap-2 px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-xs text-pnr-cyan border border-slate-200 dark:border-slate-700">
-                                  <FileText size={12} />
-                                  <span className="max-w-[120px] truncate">{file}</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-400 italic">Dosya yok</span>
-                          )}
+                        <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+                          <div className="flex items-center gap-3 text-slate-700 dark:text-slate-300">
+                            <RefreshCcw size={18} className="text-slate-400 shrink-0" />
+                            <span className="font-medium">Durum</span>
+                          </div>
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={(e) => toggleStatus(e, teacher.id)}
+                              className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none ${teacher.status === 'passive' ? 'bg-slate-300 dark:bg-slate-600' : 'bg-pnr-green'
+                                }`}
+                            >
+                              <span
+                                className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform duration-200 shadow-sm ${teacher.status === 'passive' ? 'translate-x-1' : 'translate-x-6'
+                                  }`}
+                              />
+                            </button>
+                            <span className={`text-[11px] font-bold uppercase transition-colors ${teacher.status === 'active' ? 'text-pnr-green' : 'text-slate-400'}`}>
+                              {teacher.status === 'active' ? 'Aktif' : 'Pasif'}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    )}
+
+                      <div className="space-y-2 mt-2">
+                        <h4 className="text-xs uppercase font-bold text-slate-400 tracking-wider">Dosyalar</h4>
+                        {teacher.files && teacher.files.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {teacher.files.map((file, i) => (
+                              <div key={i} className="flex items-center gap-2 px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-xs text-pnr-cyan border border-slate-200 dark:border-slate-700">
+                                <FileText size={12} />
+                                <span className="max-w-[120px] truncate">{file}</span>
+                                <Download size={12} className="opacity-50" />
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">Dosya yok</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -854,7 +669,6 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
             <div className="col-span-full p-12 text-center text-slate-500">Kayıt bulunamadı.</div>
           )}
         </div>
-      )}
 
       {/* ADD/EDIT TEACHER MODAL */}
       {

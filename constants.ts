@@ -56,7 +56,7 @@ export const MENU_ITEMS: NavItem[] = [
         roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL]
       },
       { id: 'branslar', title: 'Branşlar', path: '/management/branches' },
-      { id: 'ogretmenler', title: 'Öğretmen Girişi', path: '/management/teachers' },
+      { id: 'ogretmenler', title: 'Öğretmenler', path: '/management/teachers', icon: Users },
       { id: 'sozlesmeler', title: 'Sözleşmeler', path: '/management/contracts' },
       { id: 'todo', title: 'To-Do', path: '/management/todo', icon: CheckSquare },
     ],
@@ -93,6 +93,21 @@ export const MENU_ITEMS: NavItem[] = [
         path: '/education/schedule',
         icon: CalendarDays,
         roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL, UserRole.OGRETMEN, UserRole.VELI]
+      },
+    ],
+  },
+  {
+    id: 'gosteri',
+    title: 'Gösteri',
+    icon: CalendarCheck,
+    roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL],
+    subItems: [
+      {
+        id: 'gosteriler',
+        title: 'Yeni Gösteri Tanımla',
+        path: '/events/shows',
+        icon: CalendarDays,
+        roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL],
       },
     ],
   },

@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-    ChevronLeft, ChevronRight, Plus, Wallet, TrendingUp,
+    BookOpen, ChevronLeft, ChevronRight, Plus, Wallet, TrendingUp,
     TrendingDown, Calendar, Search, Filter, Save, X, Layers,
-    List, ChevronDown, AlertCircle, Tag, Clock, Trash2, Pencil
+    List, ChevronDown, AlertCircle, Tag, Clock, Trash2, Pencil, Upload, Download,
+    CheckSquare, Square, FileText
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import * as XLSX from 'xlsx';
 
 // --- Types ---
 interface CashRecord {
@@ -30,6 +32,21 @@ interface CategoryOption {
     descriptions: CategoryDescription[]; // Added sub-items
 }
 
+interface ImportedRow {
+    id: string;
+    date: string;
+    description: string;
+    amount: number;
+    type: 'income' | 'expense';
+    isSelected: boolean;
+    categoryId: string;
+    subCategoryId: string;
+    targetMonth: number;
+    targetYear: number;
+    installments: number;
+    installmentInfo?: string;
+}
+
 const MONTH_NAMES = [
     'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
     'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
@@ -46,9 +63,15 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
     const [openingBalance, setOpeningBalance] = useState(0);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+    const [hideCategorized, setHideCategorized] = useState(false);
     const [highlightedInstallment, setHighlightedInstallment] = useState<string | null>(null);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [searchTerm, setSearchTerm] = useState('');
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [importedRows, setImportedRows] = useState<ImportedRow[]>([]);
+    const [bulkCategory, setBulkCategory] = useState<string>('');
+    const [bulkSubCategory, setBulkSubCategory] = useState<string>('');
 
     // Form State
     const [formData, setFormData] = useState({
@@ -72,6 +95,20 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         return new Date(dateStr).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
     };
 
+    const parseDescriptionParts = (description?: string) => {
+        const parts = description ? description.split(' - ').map(part => part.trim()).filter(Boolean) : [];
+        if (parts.length === 0) return { subCategory: '-', period: '-' };
+
+        const lastPart = parts[parts.length - 1];
+        const [monthText, yearText] = lastPart.split(/\s+/);
+        const isPeriod = MONTH_NAMES.some(month => month.toLocaleLowerCase('tr-TR') === (monthText || '').toLocaleLowerCase('tr-TR')) && /^\d{4}$/.test(yearText || '');
+
+        return {
+            subCategory: isPeriod ? (parts.slice(0, -1).join(' - ') || '-') : parts.join(' - '),
+            period: isPeriod ? lastPart : '-'
+        };
+    };
+
     const getMonthName = (date: Date) => {
         return date.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
     };
@@ -79,6 +116,70 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
     const getYearsList = () => {
         const currentYear = new Date().getFullYear();
         return [currentYear - 1, currentYear, currentYear + 1];
+    };
+
+    const parseTurkishAmount = (val: any): number => {
+        if (val === undefined || val === null) return 0;
+        if (typeof val === 'number') return val;
+        if (typeof val !== 'string') return 0;
+
+        const isNegative = val.trim().startsWith('-') || val.trim().endsWith('-');
+        let clean = val.replace(/[^0-9,.]/g, '');
+
+        if (clean.includes(',') && clean.includes('.')) {
+            clean = clean.lastIndexOf(',') > clean.lastIndexOf('.')
+                ? clean.replace(/\./g, '').replace(',', '.')
+                : clean.replace(/,/g, '');
+        } else if (clean.includes(',')) {
+            clean = clean.replace(',', '.');
+        } else if (clean.includes('.') && clean.split('.').pop()?.length === 3) {
+            clean = clean.replace(/\./g, '');
+        }
+
+        const parsed = parseFloat(clean);
+        if (isNaN(parsed)) return 0;
+        return isNegative ? -parsed : parsed;
+    };
+
+    const normalizeExcelDate = (val: any): string => {
+        if (!val) return '';
+        if (val instanceof Date) return val.toISOString().split('T')[0];
+        if (typeof val === 'number') {
+            const parsed = XLSX.SSF.parse_date_code(val);
+            if (parsed) {
+                const date = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
+                return date.toISOString().split('T')[0];
+            }
+        }
+
+        const str = String(val).trim();
+        const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+        const trMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+        if (trMatch) {
+            const day = trMatch[1].padStart(2, '0');
+            const month = trMatch[2].padStart(2, '0');
+            return `${trMatch[3]}-${month}-${day}`;
+        }
+
+        const parsedDate = new Date(str);
+        return isNaN(parsedDate.getTime()) ? '' : parsedDate.toISOString().split('T')[0];
+    };
+
+    const parsePeriodText = (periodText: string, fallbackDate: string) => {
+        const fallback = new Date(fallbackDate);
+        let targetMonth = isNaN(fallback.getTime()) ? new Date().getMonth() : fallback.getMonth();
+        let targetYear = isNaN(fallback.getTime()) ? new Date().getFullYear() : fallback.getFullYear();
+
+        const [monthText, yearText] = periodText.trim().split(/\s+/);
+        const monthIndex = MONTH_NAMES.findIndex(month => month.toLocaleLowerCase('tr-TR') === (monthText || '').toLocaleLowerCase('tr-TR'));
+        const yearValue = parseInt(yearText || '', 10);
+
+        if (monthIndex !== -1) targetMonth = monthIndex;
+        if (!isNaN(yearValue)) targetYear = yearValue;
+
+        return { targetMonth, targetYear };
     };
 
     // --- Data Fetching ---
@@ -136,7 +237,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                 .select('*')
                 .gte('date', startOfYear)
                 .lte('date', endOfYear)
-                .order('date', { ascending: true });
+                .order('date', { ascending: false });
 
             if (error) throw error;
             setRecords(recordData || []);
@@ -190,11 +291,9 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         // Find the matching category to populate sub-category options if needed
         const category = categories.find(c => c.title === record.category_name);
 
-        // Parse description: "SubCategory - Month Year"
         let subCatId = '';
-        const descParts = record.description.split(' - ');
-        if (descParts.length > 1 && category) {
-            const subCatDesc = descParts[0];
+        const { subCategory: subCatDesc } = parseDescriptionParts(record.description);
+        if (subCatDesc !== '-' && category) {
             const foundSub = category.descriptions.find(d => d.description === subCatDesc);
             if (foundSub) subCatId = foundSub.id;
         }
@@ -369,6 +468,164 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         }
     };
 
+    const handleDownloadExcel = () => {
+        const exportRows = filteredBySearch.map(record => {
+            const { subCategory, period } = parseDescriptionParts(record.description);
+
+            return {
+                Tarih: record.date,
+                Tip: record.type === 'income' ? 'Gelir' : 'Gider',
+                Kategori: record.category_name,
+                'Alt Kategori': subCategory === '-' ? '' : subCategory,
+                Dönem: period === '-' ? '' : period,
+                Taksit: record.installment_info || '',
+                Tutar: record.amount
+            };
+        });
+
+        const worksheet = XLSX.utils.json_to_sheet(exportRows);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Kasa Defteri');
+        XLSX.writeFile(workbook, `kasa-defteri-${currentDate.getFullYear()}-${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !canEdit) return;
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            try {
+                const bstr = evt.target?.result;
+                if (!bstr) return;
+
+                const wb = XLSX.read(bstr, { type: 'array' });
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                const data: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+                const parsedRows = data.map(row => {
+                    const typeText = String(row.Tip || row.tip || '').toLocaleLowerCase('tr-TR');
+                    const type: 'income' | 'expense' = typeText.includes('gider') || typeText.includes('expense') ? 'expense' : 'income';
+                    const categoryName = String(row.Kategori || row.kategori || '').trim();
+                    const category = categories.find(c => c.title === categoryName && c.type === type);
+                    const amount = Math.abs(parseTurkishAmount(row.Tutar ?? row.tutar));
+                    const date = normalizeExcelDate(row.Tarih ?? row.tarih);
+                    const fullDescription = String(row.Açıklama || row.aciklama || '').trim();
+                    const subCategory = String(row['Alt Kategori'] || row.altKategori || '').trim();
+                    const period = String(row.Dönem || row.Donem || row.donem || '').trim();
+                    const parsedDescription = parseDescriptionParts(fullDescription);
+                    const effectiveSubCategory = parsedDescription.subCategory !== '-' ? parsedDescription.subCategory : subCategory;
+                    const effectivePeriod = period || (parsedDescription.period !== '-' ? parsedDescription.period : '');
+                    const { targetMonth, targetYear } = parsePeriodText(effectivePeriod, date);
+
+                    return {
+                        id: Math.random().toString(36).substr(2, 9),
+                        date,
+                        type,
+                        amount,
+                        description: effectiveSubCategory || fullDescription || 'Genel',
+                        isSelected: true,
+                        categoryId: category?.id || '',
+                        subCategoryId: category?.descriptions.find(d => d.description === effectiveSubCategory)?.id || '',
+                        targetMonth,
+                        targetYear,
+                        installments: Math.max(1, parseInt(String(row.Taksit || row.taksit || '1').split('/')[1] || String(row.Taksit || row.taksit || '1'), 10) || 1),
+                        installmentInfo: String(row.Taksit || row.taksit || '').trim() || undefined
+                    };
+                }).filter(row => row.date && row.amount > 0);
+
+                if (parsedRows.length === 0) {
+                    alert('Dosyadan içe aktarılacak geçerli kasa kaydı bulunamadı.');
+                    return;
+                }
+
+                setImportedRows(parsedRows);
+                setIsUploadModalOpen(true);
+            } catch (err: any) {
+                alert('Excel dosyası yüklenemedi: ' + err.message);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+        e.target.value = '';
+    };
+
+    const updateImportRow = (id: string, field: keyof ImportedRow, value: any) => {
+        setImportedRows(prev => prev.map(row => {
+            if (row.id !== id) return row;
+            if (field === 'categoryId') return { ...row, categoryId: value, subCategoryId: '' };
+            if (field === 'type') return { ...row, type: value, categoryId: '', subCategoryId: '' };
+            return { ...row, [field]: value };
+        }));
+    };
+
+    const applyBulkCategory = () => {
+        if (!bulkCategory) return;
+        setImportedRows(prev => prev.map(row => row.isSelected ? { ...row, categoryId: bulkCategory, subCategoryId: bulkSubCategory } : row));
+    };
+
+    const toggleImportRowSelection = (id: string) => {
+        setImportedRows(prev => prev.map(row => row.id === id ? { ...row, isSelected: !row.isSelected } : row));
+    };
+
+    const confirmImport = async () => {
+        if (!canEdit) return;
+        const selectedRows = importedRows.filter(row => row.isSelected);
+        if (selectedRows.length === 0) return;
+
+        const invalidRows = selectedRows.filter(row => {
+            if (!row.categoryId) return true;
+            const category = categories.find(c => c.id === row.categoryId);
+            return !!(category && category.descriptions.length > 0 && !row.subCategoryId);
+        });
+
+        if (invalidRows.length > 0) {
+            alert(`Lütfen işaretli ${invalidRows.length} satırdaki eksik bilgileri (Kategori veya Alt Kategori) doldurunuz.`);
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const rowsToInsert: any[] = [];
+
+            selectedRows.forEach(row => {
+                const category = categories.find(c => c.id === row.categoryId);
+                const subCategory = category?.descriptions.find(d => d.id === row.subCategoryId);
+                const installments = Math.max(1, row.installments || 1);
+                const monthlyAmount = row.amount / installments;
+
+                for (let i = 0; i < installments; i++) {
+                    const targetM = (Number(row.targetMonth) + i) % 12;
+                    const targetY = Number(row.targetYear) + Math.floor((Number(row.targetMonth) + i) / 12);
+                    const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
+
+                    rowsToInsert.push({
+                        date: row.date,
+                        type: row.type,
+                        category_id: row.categoryId,
+                        category_name: category?.title || 'Diğer',
+                        amount: monthlyAmount,
+                        description: `${subCategory?.description || row.description || 'Genel'} - ${periodString}`,
+                        installment_info: installments > 1 ? `${i + 1}/${installments}` : (row.installmentInfo || null)
+                    });
+                }
+            });
+
+            const { error } = await supabase.from('cash_book').insert(rowsToInsert);
+            if (error) throw error;
+
+            setIsUploadModalOpen(false);
+            setImportedRows([]);
+            setBulkCategory('');
+            setBulkSubCategory('');
+            fetchData();
+            alert(`${rowsToInsert.length} adet kasa kaydı başarıyla içe aktarıldı.`);
+        } catch (err: any) {
+            alert('İçe aktarma hatası: ' + err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     // --- Calculations ---
     const filteredBySearch = records.filter(r =>
         r.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -378,6 +635,16 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
     );
 
     let runningBalance = openingBalance;
+    const balanceByRecordId = new Map<string, number>();
+    [...filteredBySearch]
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .forEach(record => {
+            runningBalance += record.type === 'income' ? record.amount : -record.amount;
+            balanceByRecordId.set(record.id, runningBalance);
+        });
+
+    const displayedRecords = [...filteredBySearch]
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     const summaryIncome = filteredBySearch.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
     const summaryExpense = filteredBySearch.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
@@ -391,28 +658,27 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
 
             {/* Header & Controls */}
             <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white dark:bg-pnr-card p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col md:flex-row md:items-center gap-4 w-full md:w-auto">
+                    <div className="flex items-center gap-3">
+                        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-xl border border-amber-100 dark:border-amber-800">
+                            <BookOpen size={32} />
+                        </div>
+                        <div>
+                            <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white tracking-tight font-display">Kasa Defteri</h1>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-4">
                     <button onClick={handlePrevYear} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
                         <ChevronLeft size={24} className="text-slate-600 dark:text-slate-300" />
                     </button>
                     <div className="text-center">
                         <h2 className="text-xl font-bold text-slate-900 dark:text-white capitalize">{currentDate.getFullYear()} Yılı</h2>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Kasa Defteri</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Yıl Seçimi</p>
                     </div>
                     <button onClick={handleNextYear} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
                         <ChevronRight size={24} className="text-slate-600 dark:text-slate-300" />
                     </button>
-
-                    {/* Filter Box */}
-                    <div className="relative ml-4 group">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-pnr-purple transition-colors" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Kayıtlarda ara..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm w-full md:w-64 focus:ring-2 focus:ring-pnr-purple outline-none transition-all"
-                        />
                     </div>
                 </div>
 
@@ -424,6 +690,19 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                         </div>
                     </div>
                     <div className="h-8 w-px bg-slate-200 dark:bg-slate-700 hidden md:block"></div>
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        accept=".xlsx, .csv"
+                        onChange={handleFileUpload}
+                    />
+                    <button
+                        onClick={handleDownloadExcel}
+                        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm"
+                    >
+                        <Download size={18} /> Excel İndir
+                    </button>
                     {canEdit && (
                         <div className="flex items-center gap-3">
                             {selectedIds.size > 0 && (
@@ -434,6 +713,12 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                     <Trash2 size={18} /> {selectedIds.size} Kaydı Sil
                                 </button>
                             )}
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm"
+                            >
+                                <Upload size={18} /> Excel Yükle
+                            </button>
                             <button
                                 onClick={() => setIsModalOpen(true)}
                                 className="bg-pnr-purple hover:bg-pnr-indigo text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-pnr-purple/20 flex items-center gap-2 transition-transform active:scale-95"
@@ -447,6 +732,18 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
 
             {/* Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center gap-4">
+                    <div className="p-3 bg-slate-200 dark:bg-slate-700 rounded-xl text-slate-600 dark:text-slate-300">
+                        <Wallet size={24} />
+                    </div>
+                    <div>
+                        <p className="text-xs font-bold text-slate-500 uppercase">Güncel Bakiye</p>
+                        <p className={`text-2xl font-bold ${(openingBalance + summaryNet) >= 0 ? 'text-slate-800 dark:text-white' : 'text-red-600'}`}>
+                            {formatCurrency(openingBalance + summaryNet)}
+                        </p>
+                    </div>
+                </div>
+
                 <div className="bg-green-50 dark:bg-green-900/10 p-5 rounded-2xl border border-green-100 dark:border-green-800 flex items-center gap-4">
                     <div className="p-3 bg-green-100 dark:bg-green-800/30 rounded-xl text-green-600 dark:text-green-400">
                         <TrendingUp size={24} />
@@ -466,27 +763,38 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                         <p className="text-2xl font-bold text-red-700 dark:text-red-400 text-right">{formatCurrency(summaryExpense)}</p>
                     </div>
                 </div>
+            </div>
 
-                <div className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center gap-4">
-                    <div className="p-3 bg-slate-200 dark:bg-slate-700 rounded-xl text-slate-600 dark:text-slate-300">
-                        <Wallet size={24} />
-                    </div>
-                    <div>
-                        <p className="text-xs font-bold text-slate-500 uppercase">Güncel Bakiye</p>
-                        <p className={`text-2xl font-bold ${(openingBalance + summaryNet) >= 0 ? 'text-slate-800 dark:text-white' : 'text-red-600'}`}>
-                            {formatCurrency(openingBalance + summaryNet)}
-                        </p>
-                    </div>
-                </div>
+            {/* Filter Bar */}
+            <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                    type="text"
+                    placeholder="Kayıtlarda ara..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full md:w-96 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pnr-purple dark:text-white"
+                />
             </div>
 
             {/* Table */}
             <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[800px]">
+                    <table className="w-full text-left border-collapse table-fixed min-w-[1180px]">
+                        <colgroup>
+                            <col className="w-12" />
+                            <col className="w-40" />
+                            <col className="w-44" />
+                            <col className="w-56" />
+                            <col className="w-36" />
+                            <col className="w-24" />
+                            <col className="w-36" />
+                            <col className="w-36" />
+                            <col className="w-24" />
+                        </colgroup>
                         <thead>
                             <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-                                <th className="p-4 w-10">
+                                <th className="p-4">
                                     <input
                                         type="checkbox"
                                         className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
@@ -494,14 +802,14 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                         onChange={toggleSelectAll}
                                     />
                                 </th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase w-32">Tarih</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase">Alt Kategori</th>
+                                <th className="p-4 text-xs font-bold text-slate-500 uppercase">Tarih</th>
                                 <th className="p-4 text-xs font-bold text-slate-500 uppercase">Kategori</th>
+                                <th className="p-4 text-xs font-bold text-slate-500 uppercase">Alt Kategori</th>
                                 <th className="p-4 text-xs font-bold text-slate-500 uppercase">Dönem</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-center w-24">Taksit</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-right w-32">Tutar</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-right w-32">Bakiye</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-center w-20">İşlem</th>
+                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-center">Taksit</th>
+                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-right">Tutar</th>
+                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-right">Bakiye</th>
+                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-center">İşlem</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -516,25 +824,21 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                             {filteredBySearch.length === 0 ? (
                                 <tr><td colSpan={9} className="p-8 text-center text-slate-400">Aranan kriterlere uygun kayıt bulunamadı.</td></tr>
                             ) : (
-                                filteredBySearch.map((record, index) => {
+                                displayedRecords.map((record, index) => {
                                     const isIncome = record.type === 'income';
-                                    if (isIncome) runningBalance += record.amount;
-                                    else runningBalance -= record.amount;
+                                    const rowBalance = balanceByRecordId.get(record.id) ?? openingBalance;
 
                                     const currentDateObj = new Date(record.date);
                                     const currentMonth = currentDateObj.getMonth();
-                                    const nextRecord = filteredBySearch[index + 1];
-                                    const nextMonth = nextRecord ? new Date(nextRecord.date).getMonth() : -1;
+                                    const previousRecord = displayedRecords[index - 1];
+                                    const previousDateObj = previousRecord ? new Date(previousRecord.date) : null;
 
-                                    // Month end logic: Only show if next record is a different month, or it's the very last record
-                                    // AND only show if we are NOT searching (search breaks the chronological flow)
-                                    const isMonthEnd = !searchTerm && (nextMonth === -1 || nextMonth !== currentMonth);
+                                    const isLatestMonthRow = !searchTerm && (!previousDateObj || previousDateObj.getMonth() !== currentMonth || previousDateObj.getFullYear() !== currentDateObj.getFullYear());
 
-                                    // Extract Sub Category and Title for matching
-                                    const subCategoryDisplay = record.description ? record.description.split(' - ')[0] : '-';
+                                    const { subCategory: subCategoryDisplay, period: periodDisplay } = parseDescriptionParts(record.description);
 
                                     // Logic for highlighting related installments:
-                                    const coreDesc = record.description ? record.description.split(' - ').slice(0, -1).join(' - ') : '';
+                                    const coreDesc = periodDisplay !== '-' ? subCategoryDisplay : (record.description || '');
                                     const installmentId = record.installment_info ? `${record.category_id}-${coreDesc}-${record.installment_info.split('/')[1]}` : null;
                                     const isHighlighted = highlightedInstallment && installmentId === highlightedInstallment;
 
@@ -543,7 +847,9 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                             <tr
                                                 className={`transition-colors ${selectedIds.has(record.id) ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''} ${isHighlighted
                                                     ? 'bg-pnr-purple/10 dark:bg-pnr-purple/20 border-l-4 border-l-pnr-purple'
-                                                    : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}
+                                                    : isLatestMonthRow
+                                                        ? 'bg-slate-100 dark:bg-slate-800/70 border-l-4 border-l-slate-400 dark:border-l-slate-500'
+                                                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}
                                             >
                                                 <td className="p-4">
                                                     <input
@@ -556,9 +862,6 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                 <td className="p-4 text-sm text-slate-600 dark:text-slate-300 font-mono">
                                                     {formatDate(record.date)}
                                                 </td>
-                                                <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
-                                                    {subCategoryDisplay}
-                                                </td>
                                                 <td className="p-4">
                                                     <span className={`text-xs px-2 py-1 rounded border ${isIncome
                                                         ? 'bg-green-50 text-green-700 border-green-200'
@@ -567,8 +870,11 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                         {record.category_name}
                                                     </span>
                                                 </td>
+                                                <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
+                                                    {subCategoryDisplay}
+                                                </td>
                                                 <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
-                                                    {record.description ? record.description.split(' - ').slice(-1)[0] : '-'}
+                                                    {periodDisplay}
                                                 </td>
                                                 <td className="p-4 text-center text-xs text-slate-500">
                                                     {record.installment_info ? (
@@ -587,8 +893,8 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                 <td className={`p-4 text-right font-bold text-sm ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
                                                     {isIncome ? '+' : '-'}{formatCurrency(record.amount)}
                                                 </td>
-                                                <td className="p-4 text-right font-mono text-sm font-bold text-slate-700 dark:text-slate-300">
-                                                    {formatCurrency(runningBalance)}
+                                                <td className="p-4 text-right font-mono text-sm font-extrabold text-slate-900 dark:text-white">
+                                                    {formatCurrency(rowBalance)}
                                                 </td>
                                                 <td className="p-4 text-center">
                                                     {canEdit && (
@@ -611,18 +917,6 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                     )}
                                                 </td>
                                             </tr>
-                                            {isMonthEnd && (
-                                                <tr className="bg-slate-50 dark:bg-slate-800/50 border-y border-slate-200 dark:border-slate-800 font-bold">
-                                                    <td className="p-3"></td>
-                                                    <td className="p-3 text-xs text-pnr-purple uppercase tracking-wider" colSpan={6}>
-                                                        {MONTH_NAMES[currentMonth]} Ayı Sonu Bakiyesi
-                                                    </td>
-                                                    <td className="p-3 text-sm font-mono text-right text-pnr-purple">
-                                                        {formatCurrency(runningBalance)}
-                                                    </td>
-                                                    <td className="p-3 border-l dark:border-slate-700"></td>
-                                                </tr>
-                                            )}
                                         </React.Fragment>
                                     );
                                 })
@@ -631,6 +925,202 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                     </table>
                 </div>
             </div>
+
+            {/* IMPORT MODAL */}
+            {isUploadModalOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                    <div className="bg-white dark:bg-pnr-card w-full max-w-[95vw] h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
+                        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
+                            <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
+                                <FileText size={20} className="text-pnr-purple" /> Dosya Önizleme ve Düzenleme (Kasa Defteri)
+                            </h3>
+                            <button onClick={() => setIsUploadModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-900" /></button>
+                        </div>
+
+                        <div className="p-4 bg-slate-50 dark:bg-slate-900/30 border-b border-slate-200 dark:border-slate-700 flex flex-wrap gap-4 items-end">
+                            <div className="w-64">
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Seçililere Kategori Ata</label>
+                                <select
+                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs dark:text-white"
+                                    value={bulkCategory}
+                                    onChange={(e) => { setBulkCategory(e.target.value); setBulkSubCategory(''); }}
+                                >
+                                    <option value="">Seçiniz...</option>
+                                    {categories.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                                </select>
+                            </div>
+                            <div className="w-64">
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Seçililere Alt Kategori Ata</label>
+                                <select
+                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs dark:text-white"
+                                    value={bulkSubCategory}
+                                    onChange={(e) => setBulkSubCategory(e.target.value)}
+                                    disabled={!bulkCategory}
+                                >
+                                    <option value="">Seçiniz...</option>
+                                    {categories.find(c => c.id === bulkCategory)?.descriptions.map(d => (
+                                        <option key={d.id} value={d.id}>{d.description}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <button
+                                onClick={applyBulkCategory}
+                                className="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-white px-4 py-2 rounded-lg text-xs font-bold h-[34px]"
+                            >
+                                Uygula
+                            </button>
+                            <div className="flex items-center gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-xl h-[34px]">
+                                <span className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">Sadece Alt Ktg Olmayanlar</span>
+                                <button
+                                    onClick={() => setHideCategorized(!hideCategorized)}
+                                    className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${hideCategorized ? 'bg-pnr-purple' : 'bg-slate-200 dark:bg-slate-700'}`}
+                                >
+                                    <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${hideCategorized ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
+                            <div className="text-xs text-slate-500 ml-auto flex items-center">
+                                {importedRows.filter(r => r.isSelected).length} satır seçildi.
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-auto p-0">
+                            <table className="w-full text-left border-collapse text-xs">
+                                <thead className="bg-slate-100 dark:bg-slate-900 text-slate-500 uppercase sticky top-0 z-10 shadow-sm">
+                                    <tr>
+                                        <th className="p-3 w-10 text-center">
+                                            <button
+                                                onClick={() => {
+                                                    const allSelected = importedRows.every(r => r.isSelected);
+                                                    setImportedRows(importedRows.map(r => ({ ...r, isSelected: !allSelected })));
+                                                }}
+                                            >
+                                                {importedRows.every(r => r.isSelected) ? <CheckSquare size={16} /> : <Square size={16} />}
+                                            </button>
+                                        </th>
+                                        <th className="p-3 w-28">Tarih</th>
+                                        <th className="p-3 min-w-[180px]">Açıklama</th>
+                                        <th className="p-3 w-24 text-right">Tutar</th>
+                                        <th className="p-3 w-24 text-center">Tür</th>
+                                        <th className="p-3 w-40">Kategori</th>
+                                        <th className="p-3 w-40">Alt Kategori</th>
+                                        <th className="p-3 w-28">Ait Olduğu Ay</th>
+                                        <th className="p-3 w-20">Yıl</th>
+                                        <th className="p-3 w-16 text-center">Taksit</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                    {importedRows
+                                        .filter(row => !hideCategorized || !row.subCategoryId)
+                                        .map((row) => {
+                                            const rowCategory = categories.find(c => c.id === row.categoryId);
+                                            const isCategoryMissing = !row.categoryId;
+                                            const hasSubOptions = rowCategory?.descriptions && rowCategory.descriptions.length > 0;
+                                            const isSubCategoryMissing = hasSubOptions && !row.subCategoryId;
+
+                                            return (
+                                                <tr key={row.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 ${!row.isSelected ? 'opacity-50 grayscale' : ''}`}>
+                                                    <td className="p-3 text-center align-middle">
+                                                        <button onClick={() => toggleImportRowSelection(row.id)} className="text-pnr-purple">
+                                                            {row.isSelected ? <CheckSquare size={16} /> : <Square size={16} className="text-slate-300" />}
+                                                        </button>
+                                                    </td>
+                                                    <td className="p-3 font-mono text-slate-600 dark:text-slate-300 align-middle">{row.date}</td>
+                                                    <td className="p-3 text-slate-900 dark:text-white align-middle">
+                                                        <input
+                                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5"
+                                                            value={row.description}
+                                                            onChange={(e) => updateImportRow(row.id, 'description', e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-green-600'}`}>
+                                                        {row.type === 'expense' ? '-' : '+'}{formatCurrency(row.amount)}
+                                                    </td>
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className={`w-full border rounded p-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-offset-1 ${row.type === 'income'
+                                                                ? 'bg-green-50 text-green-700 border-green-200 focus:ring-green-500'
+                                                                : 'bg-red-50 text-red-700 border-red-200 focus:ring-red-500'
+                                                                }`}
+                                                            value={row.type}
+                                                            onChange={(e) => updateImportRow(row.id, 'type', e.target.value as 'income' | 'expense')}
+                                                        >
+                                                            <option value="income">Gelir (+)</option>
+                                                            <option value="expense">Gider (-)</option>
+                                                        </select>
+                                                    </td>
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className={`w-full bg-white dark:bg-slate-800 border rounded p-1.5 focus:ring-1 focus:ring-pnr-purple ${isCategoryMissing ? 'border-red-500 bg-red-50 dark:bg-red-900/10' : 'border-slate-200 dark:border-slate-700'}`}
+                                                            value={row.categoryId}
+                                                            onChange={(e) => updateImportRow(row.id, 'categoryId', e.target.value)}
+                                                        >
+                                                            <option value="">Seçiniz...</option>
+                                                            {categories.filter(c => c.type === row.type).map(c => (
+                                                                <option key={c.id} value={c.id}>{c.title}</option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className={`w-full bg-white dark:bg-slate-800 border rounded p-1.5 focus:ring-1 focus:ring-pnr-purple ${isSubCategoryMissing ? 'border-red-500 bg-red-50 dark:bg-red-900/10' : 'border-slate-200 dark:border-slate-700'}`}
+                                                            value={row.subCategoryId}
+                                                            onChange={(e) => updateImportRow(row.id, 'subCategoryId', e.target.value)}
+                                                            disabled={!row.categoryId}
+                                                        >
+                                                            <option value="">Seçiniz...</option>
+                                                            {rowCategory?.descriptions.map(d => (
+                                                                <option key={d.id} value={d.id}>{d.description}</option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5"
+                                                            value={row.targetMonth}
+                                                            onChange={(e) => updateImportRow(row.id, 'targetMonth', parseInt(e.target.value))}
+                                                        >
+                                                            {MONTH_NAMES.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                                                        </select>
+                                                    </td>
+                                                    <td className="p-2 align-middle">
+                                                        <select
+                                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5"
+                                                            value={row.targetYear}
+                                                            onChange={(e) => updateImportRow(row.id, 'targetYear', parseInt(e.target.value))}
+                                                        >
+                                                            {getYearsList().map(y => <option key={y} value={y}>{y}</option>)}
+                                                        </select>
+                                                    </td>
+                                                    <td className="p-2 align-middle text-center">
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            max="24"
+                                                            className="w-12 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5 text-center"
+                                                            value={row.installments}
+                                                            onChange={(e) => updateImportRow(row.id, 'installments', parseInt(e.target.value) || 1)}
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex justify-end gap-3">
+                            <button onClick={() => setIsUploadModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-800 font-medium">İptal</button>
+                            <button
+                                onClick={confirmImport}
+                                className="bg-pnr-purple hover:bg-pnr-indigo text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-transform active:scale-95 disabled:opacity-50"
+                                disabled={loading || importedRows.filter(r => r.isSelected).length === 0}
+                            >
+                                {loading ? 'Aktarılıyor...' : `Seçilenleri Aktar (${importedRows.filter(r => r.isSelected).length})`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* NEW RECORD MODAL */}
             {isModalOpen && canEdit && (

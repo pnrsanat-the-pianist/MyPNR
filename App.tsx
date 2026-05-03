@@ -5,7 +5,7 @@ import Sidebar from './components/Layout/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Branches from './pages/Management/Branches';
-import Teachers from './pages/Management/Teachers';
+import TeachersHub from './pages/Management/TeachersHub';
 import Contracts from './pages/Management/Contracts';
 import Todo from './pages/Management/Todo';
 import CRM from './pages/Education/CRM';
@@ -15,6 +15,7 @@ import Permissions from './pages/System/Permissions';
 import DanceClasses from './pages/Education/DanceClasses';
 import InstrumentLessons from './pages/Education/InstrumentLessons';
 import Schedule from './pages/Education/Schedule';
+import Shows from './pages/Events/Shows';
 import FinanceCategories from './pages/Finance/Categories';
 import CashBook from './pages/Finance/CashBook';
 import Denizbank from './pages/Finance/Denizbank';
@@ -211,7 +212,8 @@ const App: React.FC = () => {
       case '/management/branches':
         return renderProtectedPage('branslar', (canEdit) => <Branches canEdit={canEdit} />);
       case '/management/teachers':
-        return renderProtectedPage('ogretmenler', (canEdit) => <Teachers canEdit={canEdit} />);
+      case '/management/teachers/candidates':
+        return renderProtectedPage('ogretmenler', (canEdit) => <TeachersHub canEdit={canEdit} currentPath={pathBase} />);
       case '/management/contracts':
         return renderProtectedPage('sozlesmeler', (canEdit) => <Contracts canEdit={canEdit} />);
       case '/management/todo':
@@ -228,6 +230,10 @@ const App: React.FC = () => {
         return renderProtectedPage('enstruman-dersleri', (canEdit) => <InstrumentLessons currentUserRole={userRole} canEdit={canEdit} />);
       case '/education/schedule':
         return renderProtectedPage('ders-programi', (canEdit) => <Schedule canEdit={canEdit} />);
+
+      // Events
+      case '/events/shows':
+        return renderProtectedPage('gosteriler', (canEdit) => <Shows canEdit={canEdit} />);
 
       // Finance
       case '/finance/categories':
