@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import * as XLSX from 'xlsx';
+import { normalizeDottedIForCompare } from '../../lib/readableText';
+import { fetchFinanceCategories, FinanceCategoryOption } from '../../lib/financeCategories';
 
 // --- Types ---
 interface BankRecord {
@@ -135,6 +137,12 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         }
     };
 
+    const findCategoryByTitle = (title: string, preferredType?: 'income' | 'expense', source: CategoryOption[] | FinanceCategoryOption[] = categories) => {
+        const normalizedTitle = normalizeDottedIForCompare(title);
+        return source.find(c => c.type === preferredType && normalizeDottedIForCompare(c.title) === normalizedTitle)
+            || source.find(c => normalizeDottedIForCompare(c.title) === normalizedTitle);
+    };
+
     // --- Data Fetching ---
     const fetchData = async () => {
         setLoading(true);
@@ -143,30 +151,8 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
         try {
             // 1. Fetch Categories with Descriptions
-            const { data: catData, error: catError } = await supabase
-                .from('financial_categories')
-                .select(`
-          id, 
-          title, 
-          type,
-          financial_category_descriptions (
-            id,
-            description
-          )
-        `)
-                .order('title');
-
-            if (catError) throw catError;
-
-            if (catData) {
-                const formattedCategories: CategoryOption[] = catData.map((c: any) => ({
-                    id: c.id,
-                    title: c.title,
-                    type: c.type,
-                    descriptions: c.financial_category_descriptions || []
-                }));
-                setCategories(formattedCategories);
-            }
+            const formattedCategories = await fetchFinanceCategories();
+            setCategories(formattedCategories);
 
             // 2. Fetch Automation Rules
             const { data: ruleData } = await supabase.from('category_automation_rules').select('*');
@@ -271,10 +257,13 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         if (!file) return;
 
         const reader = new FileReader();
-        reader.onload = (evt) => {
+        reader.onload = async (evt) => {
             const bstr = evt.target?.result;
             if (bstr) {
                 try {
+                    const uploadCategories = await fetchFinanceCategories();
+                    setCategories(uploadCategories);
+
                     const wb = XLSX.read(bstr, { type: 'array' });
                     const wsname = wb.SheetNames[0];
                     const ws = wb.Sheets[wsname];
@@ -398,7 +387,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
                         if (amountFound && amount !== 0) {
                             const typeText = typeIdx !== -1 && row[typeIdx] ? String(row[typeIdx]).toLocaleLowerCase('tr-TR') : '';
-                            const type: 'income' | 'expense' = typeText.includes('gider') || typeText.includes('expense')
+                            let type: 'income' | 'expense' = typeText.includes('gider') || typeText.includes('expense')
                                 ? 'expense'
                                 : typeText.includes('gelir') || typeText.includes('income')
                                     ? 'income'
@@ -409,11 +398,12 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                             let detectedSubCategoryId = '';
 
                             const categoryTitle = categoryIdx !== -1 && row[categoryIdx] ? String(row[categoryIdx]).trim() : '';
-                            const matchedCategory = categoryTitle ? categories.find(c => c.title === categoryTitle && c.type === type) : undefined;
+                            const matchedCategory = categoryTitle ? findCategoryByTitle(categoryTitle, type, uploadCategories) : undefined;
                             if (matchedCategory) {
+                                type = matchedCategory.type;
                                 detectedCategoryId = matchedCategory.id;
                                 const subCategoryTitle = subCategoryIdx !== -1 && row[subCategoryIdx] ? String(row[subCategoryIdx]).trim() : '';
-                                detectedSubCategoryId = matchedCategory.descriptions.find(d => d.description === subCategoryTitle)?.id || '';
+                                detectedSubCategoryId = matchedCategory.descriptions.find(d => normalizeDottedIForCompare(d.description) === normalizeDottedIForCompare(subCategoryTitle))?.id || '';
                             }
 
                             const normDesc = desc.toLocaleUpperCase('tr-TR');
@@ -886,22 +876,22 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                 {loading ? (
                     <div className="p-12 text-center text-slate-500">Yükleniyor...</div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse table-fixed min-w-[1180px]">
+                    <div className="overflow-x-auto sm:overflow-visible">
+                        <table className="w-full text-left border-collapse table-fixed text-xs sm:text-sm">
                             <colgroup>
-                                <col className="w-12" />
-                                <col className="w-40" />
-                                <col className="w-44" />
-                                <col className="w-56" />
-                                <col className="w-36" />
-                                <col className="w-24" />
-                                <col className="w-36" />
-                                <col className="w-36" />
-                                <col className="w-24" />
+                                <col className="w-8 sm:w-12" />
+                                <col className="w-[18%] sm:w-[13%]" />
+                                <col className="w-[21%] sm:w-[15%]" />
+                                <col className="w-[22%] sm:w-[19%]" />
+                                <col className="hidden md:table-column md:w-[12%]" />
+                                <col className="hidden lg:table-column lg:w-[8%]" />
+                                <col className="w-[21%] sm:w-[13%]" />
+                                <col className="hidden md:table-column md:w-[13%]" />
+                                <col className="w-[10%] sm:w-[7%]" />
                             </colgroup>
                             <thead>
                                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-500 uppercase">
-                                    <th className="p-4">
+                                    <th className="p-2 sm:p-4">
                                         <input
                                             type="checkbox"
                                             className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
@@ -909,22 +899,23 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                             onChange={toggleSelectAll}
                                         />
                                     </th>
-                                    <th className="p-4">Tarih</th>
-                                    <th className="p-4">Kategori</th>
-                                    <th className="p-4">Alt Kategori</th>
-                                    <th className="p-4">Dönem</th>
-                                    <th className="p-4 text-center">Taksit</th>
-                                    <th className="p-4 text-right">Tutar</th>
-                                    <th className="p-4 text-right">Bakiye</th>
-                                    <th className="p-4 text-center">İşlem</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs">Tarih</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs">Kategori</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs">Alt Kategori</th>
+                                    <th className="hidden md:table-cell p-2 sm:p-4">Dönem</th>
+                                    <th className="hidden lg:table-cell p-2 sm:p-4 text-center">Taksit</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs text-right">Tutar</th>
+                                    <th className="hidden md:table-cell p-2 sm:p-4 text-right">Bakiye</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs text-center">İşlem</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                 <tr className="bg-slate-50/50 dark:bg-slate-900/30 italic text-slate-500">
-                                    <td className="p-4"></td>
-                                    <td className="p-4 text-xs" colSpan={6}>Devreden Bakiye</td>
-                                    <td className="p-4 text-sm font-mono font-bold text-right">{formatCurrency(openingBalance)}</td>
-                                    <td className="p-4"></td>
+                                    <td className="p-2 sm:p-4"></td>
+                                    <td className="p-2 sm:p-4 text-xs" colSpan={4}>Devreden Bakiye</td>
+                                    <td className="p-2 sm:p-4 text-xs sm:text-sm font-mono font-bold text-right">{formatCurrency(openingBalance)}</td>
+                                    <td className="hidden md:table-cell p-2 sm:p-4"></td>
+                                    <td className="p-2 sm:p-4"></td>
                                 </tr>
 
                                 {filteredRecords.length > 0 ? (
@@ -943,7 +934,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                         return (
                                             <React.Fragment key={record.id}>
                                                 <tr className={`transition-colors ${selectedIds.has(record.id) ? 'bg-blue-50/50 dark:bg-blue-900/10' : isLatestMonthRow ? 'bg-slate-100 dark:bg-slate-800/70 border-l-4 border-l-slate-400 dark:border-l-slate-500' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
-                                                    <td className="p-4">
+                                                    <td className="p-2 sm:p-4">
                                                         <input
                                                             type="checkbox"
                                                             className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
@@ -951,33 +942,33 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                                             onChange={() => toggleSelectRecord(record.id)}
                                                         />
                                                     </td>
-                                                    <td className="p-4 text-sm text-slate-600 dark:text-slate-300 font-mono">
+                                                    <td className="p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-300 font-mono break-words">
                                                         {formatDate(record.date)}
                                                     </td>
-                                                    <td className="p-4">
-                                                        <span className={`text-xs px-2 py-1 rounded border ${isIncome
+                                                    <td className="p-2 sm:p-4">
+                                                        <span className={`inline-block max-w-full break-words text-[10px] sm:text-xs px-1.5 sm:px-2 py-1 rounded border ${isIncome
                                                             ? 'bg-green-50 text-green-700 border-green-200'
                                                             : 'bg-red-50 text-red-700 border-red-200'
                                                             }`}>
                                                             {record.category_name}
                                                         </span>
                                                     </td>
-                                                    <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
+                                                    <td className="p-2 sm:p-4 text-xs sm:text-sm font-medium text-slate-900 dark:text-white break-words">
                                                         {subCategoryDisplay}
                                                     </td>
-                                                    <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
+                                                    <td className="hidden md:table-cell p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-400 break-words">
                                                         {periodDisplay}
                                                     </td>
-                                                    <td className="p-4 text-center text-xs text-slate-500">
+                                                    <td className="hidden lg:table-cell p-2 sm:p-4 text-center text-xs text-slate-500">
                                                         {record.installment_info || '-'}
                                                     </td>
-                                                    <td className={`p-4 text-right font-bold text-sm ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
+                                                    <td className={`p-2 sm:p-4 text-right font-bold text-xs sm:text-sm break-words ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
                                                         {isIncome ? '+' : '-'}{formatCurrency(record.amount)}
                                                     </td>
-                                                    <td className="p-4 text-right font-mono text-sm font-extrabold text-slate-900 dark:text-white">
+                                                    <td className="hidden md:table-cell p-2 sm:p-4 text-right font-mono text-xs sm:text-sm font-extrabold text-slate-900 dark:text-white">
                                                         {formatCurrency(rowBalance)}
                                                     </td>
-                                                    <td className="p-4 text-center">
+                                                    <td className="p-2 sm:p-4 text-center">
                                                         {canEdit && (
                                                             <button
                                                                 onClick={() => handleDelete(record.id)}
@@ -1013,7 +1004,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                     <div className="bg-white dark:bg-pnr-card w-full max-w-[95vw] h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
                         <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
                             <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-                                <FileText size={20} className="text-pnr-purple" /> Dosya Önizleme ve Düzenleme (POS)
+                                <FileText size={20} className="text-pnr-purple" /> Dosya Önizleme ve Düzenleme (Denizbank POS)
                             </h3>
                             <button onClick={() => setIsUploadModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-900" /></button>
                         </div>
@@ -1085,7 +1076,6 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                             </button>
                                         </th>
                                         <th className="p-3 w-28">Tarih</th>
-                                        <th className="p-3 min-w-[200px]">Açıklama</th>
                                         <th className="p-3 w-24 text-right">Tutar</th>
                                         <th className="p-3 w-24 text-center">Tür</th>
                                         <th className="p-3 w-40">Kategori</th>
@@ -1112,11 +1102,8 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                                         </button>
                                                     </td>
                                                     <td className="p-3 font-mono text-slate-600 dark:text-slate-300 align-middle">{row.date}</td>
-                                                    <td className="p-3 text-slate-900 dark:text-white align-middle truncate max-w-[200px]" title={row.description}>
-                                                        {row.description}
-                                                    </td>
-                                                    <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-blue-600'}`}>
-                                                        {row.type === 'expense' ? '-' : ''}{formatCurrency(row.amount)}
+                                                    <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-green-600'}`}>
+                                                        {row.type === 'expense' ? '-' : '+'}{formatCurrency(row.amount)}
                                                     </td>
                                                     <td className="p-2 align-middle">
                                                         <select

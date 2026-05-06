@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { Users, UserPlus, RefreshCcw, Search, MessageSquare, CheckCircle2, XCircle, Clock, CheckSquare, ArrowRight, TrendingDown, Calendar, TrendingUp, Wallet } from 'lucide-react';
+import { Users, UserPlus, RefreshCcw, Search, MessageSquare, CheckCircle2, XCircle, Clock, CheckSquare, ArrowRight, TrendingDown, Calendar, TrendingUp, Wallet, Landmark, CreditCard } from 'lucide-react';
 import StudentDistributionChart from '../../components/Dashboard/StudentDistributionChart';
 import TeacherPerformanceChart from '../../components/Dashboard/TeacherPerformanceChart';
 import { PNR_PALETTE } from '../../constants';
@@ -39,7 +39,13 @@ const AdminDashboard: React.FC = () => {
 
     // New: Daily Schedule & Finance
     const [todaysLessons, setTodaysLessons] = useState<DailyLesson[]>([]);
-    const [monthlyFinance, setMonthlyFinance] = useState({ income: 0, expense: 0, balance: 0, totalBalance: 0 });
+    const [financeBalances, setFinanceBalances] = useState({
+        cash: 0,
+        denizbank: 0,
+        denizbankPos: 0,
+        vakifbank: 0,
+        total: 0
+    });
 
     // --- Helper: Branch Color Mapping ---
     const getBranchAvatarStyle = (branchName: string) => {
@@ -70,7 +76,6 @@ const AdminDashboard: React.FC = () => {
             const now = new Date();
             const todayStr = now.toISOString().split('T')[0];
             const startOfMonthISO = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-            const endOfMonthISO = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString();
 
             // 1. Fetch Students (For Charts & Recent List & Passive Count)
             const { data: students, error: studentsError } = await supabase
@@ -153,26 +158,38 @@ const AdminDashboard: React.FC = () => {
             lessons.sort((a, b) => a.time.localeCompare(b.time));
             setTodaysLessons(lessons);
 
-            // 5. Fetch MONTHLY FINANCE
-            const { data: cashData } = await supabase
-                .from('cash_book')
-                .select('amount, type')
-                .gte('date', startOfMonthISO)
-                .lte('date', endOfMonthISO);
+            // 5. Fetch FINANCE BALANCES (All time)
+            const calculateBookBalance = (rows: any[] = []) => {
+                return rows.reduce((acc, curr) => {
+                    const amount = Number(curr.amount || 0);
+                    return curr.type === 'income' ? acc + amount : acc - amount;
+                }, 0);
+            };
 
-            if (cashData) {
-                const inc = cashData.filter(x => x.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
-                const exp = cashData.filter(x => x.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
+            const [cashBook, denizbankBook, denizbankPosBook, vakifbankBook] = await Promise.all([
+                supabase.from('cash_book').select('amount, type'),
+                supabase.from('denizbank_book').select('amount, type'),
+                supabase.from('denizbank_pos_book').select('amount, type'),
+                supabase.from('vakifbank_book').select('amount, type')
+            ]);
 
-                // Fetch TOTAL BALANCE (All time)
-                const { data: allCash } = await supabase.from('cash_book').select('amount, type');
-                let total = 0;
-                if (allCash) {
-                    total = allCash.reduce((acc, curr) => curr.type === 'income' ? acc + (curr.amount || 0) : acc - (curr.amount || 0), 0);
-                }
+            if (cashBook.error) throw cashBook.error;
+            if (denizbankBook.error) throw denizbankBook.error;
+            if (denizbankPosBook.error) throw denizbankPosBook.error;
+            if (vakifbankBook.error) throw vakifbankBook.error;
 
-                setMonthlyFinance({ income: inc, expense: exp, balance: inc - exp, totalBalance: total });
-            }
+            const cash = calculateBookBalance(cashBook.data || []);
+            const denizbank = calculateBookBalance(denizbankBook.data || []);
+            const denizbankPos = calculateBookBalance(denizbankPosBook.data || []);
+            const vakifbank = calculateBookBalance(vakifbankBook.data || []);
+
+            setFinanceBalances({
+                cash,
+                denizbank,
+                denizbankPos,
+                vakifbank,
+                total: cash + denizbank + denizbankPos + vakifbank
+            });
 
             // --- PROCESS LEADS ---
             if (leadsData) {
@@ -252,6 +269,13 @@ const AdminDashboard: React.FC = () => {
     }, []);
 
     const formatCurrency = (amount: number) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(amount);
+
+    const financeItems = [
+        { label: 'Kasa Defteri', value: financeBalances.cash, icon: Wallet, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/10' },
+        { label: 'Denizbank', value: financeBalances.denizbank, icon: Landmark, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/10' },
+        { label: 'Denizbank POS', value: financeBalances.denizbankPos, icon: CreditCard, color: 'text-cyan-600', bg: 'bg-cyan-50 dark:bg-cyan-900/10' },
+        { label: 'Vakıfbank', value: financeBalances.vakifbank, icon: Landmark, color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-900/10' }
+    ];
 
     return (
         <div className="w-full max-w-full space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -438,24 +462,39 @@ const AdminDashboard: React.FC = () => {
                                 </button>
                             </div>
 
-                            <div className="flex-1 flex flex-col justify-center items-center py-4">
-                                <div className="text-center">
-                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Toplam Kasa Bakiyesi</p>
-                                    <p className={`text-3xl font-black font-mono tracking-tight ${monthlyFinance.totalBalance >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
-                                        {formatCurrency(monthlyFinance.totalBalance)}
-                                    </p>
-                                </div>
+                            <div className="flex-1 space-y-2">
+                                {financeItems.map(item => {
+                                    const Icon = item.icon;
+                                    return (
+                                        <div key={item.label} className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/20">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${item.bg}`}>
+                                                    <Icon size={16} className={item.color} />
+                                                </div>
+                                                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 truncate">{item.label}</span>
+                                            </div>
+                                            <span className={`text-xs font-black font-mono whitespace-nowrap ${item.value >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
+                                                {formatCurrency(item.value)}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
                             </div>
 
                             <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
                                 <div className="flex items-center gap-2">
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${monthlyFinance.totalBalance >= 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                                        {monthlyFinance.totalBalance >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${financeBalances.total >= 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                                        {financeBalances.total >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
                                     </div>
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Durum</span>
+                                    <div>
+                                        <span className="block text-[10px] font-bold text-slate-400 uppercase">Toplam Bakiye</span>
+                                        <span className={`block text-base font-black font-mono ${financeBalances.total >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
+                                            {formatCurrency(financeBalances.total)}
+                                        </span>
+                                    </div>
                                 </div>
-                                <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${monthlyFinance.totalBalance >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
-                                    {monthlyFinance.totalBalance >= 0 ? 'Kârda' : 'Zararda'}
+                                <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${financeBalances.total >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                                    {financeBalances.total >= 0 ? 'Pozitif' : 'Negatif'}
                                 </span>
                             </div>
                         </div>

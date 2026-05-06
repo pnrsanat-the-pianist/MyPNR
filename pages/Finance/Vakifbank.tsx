@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import * as XLSX from 'xlsx';
+import { normalizeDottedIForCompare } from '../../lib/readableText';
+import { fetchFinanceCategories, FinanceCategoryOption } from '../../lib/financeCategories';
 
 // --- Types ---
 interface BankRecord {
@@ -69,7 +71,6 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
     const [records, setRecords] = useState<BankRecord[]>([]);
     const [categories, setCategories] = useState<CategoryOption[]>([]);
     const [automationRules, setAutomationRules] = useState<AutomationRule[]>([]);
-    const [openingBalance, setOpeningBalance] = useState(0);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -134,55 +135,84 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
         }
     };
 
+    const findCategoryByTitle = (title: string, preferredType?: 'income' | 'expense', source: CategoryOption[] | FinanceCategoryOption[] = categories) => {
+        const normalizedTitle = normalizeDottedIForCompare(title);
+        return source.find(c => c.type === preferredType && normalizeDottedIForCompare(c.title) === normalizedTitle)
+            || source.find(c => normalizeDottedIForCompare(c.title) === normalizedTitle);
+    };
+
+    const signedAmount = (record: Pick<BankRecord, 'type' | 'amount'>) => record.type === 'income' ? record.amount : -record.amount;
+    const normalizeSearchText = (value: any) => String(value ?? '')
+        .toLocaleLowerCase('tr-TR')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    const isDevirRecord = (record: Pick<BankRecord, 'date' | 'category_name' | 'description'>) => {
+        const text = normalizeSearchText(`${record.category_name} ${record.description}`);
+        return text.includes('devir') || text.includes('devreden');
+    };
+    const isAnnualDevirRecord = (record: Pick<BankRecord, 'date' | 'category_name' | 'description'>, year: number) => {
+        const [recordYear, month, day] = record.date.split('-').map(Number);
+        return recordYear === year && month === 1 && day === 1 && isDevirRecord(record);
+    };
+    const sortRecordsForBalance = (sourceRecords: BankRecord[]) => {
+        return [...sourceRecords].sort((a, b) => {
+            const aIsDevir = isDevirRecord(a);
+            const bIsDevir = isDevirRecord(b);
+            if (aIsDevir !== bIsDevir) return aIsDevir ? 1 : -1;
+            return new Date(b.date).getTime() - new Date(a.date).getTime();
+        });
+    };
+    const buildBalanceMap = (sourceRecords: BankRecord[]) => {
+        const sortedRecords = sortRecordsForBalance(sourceRecords);
+        const balanceMap = new Map<string, number>();
+        let runningBalance = 0;
+
+        for (let i = sortedRecords.length - 1; i >= 0; i--) {
+            const record = sortedRecords[i];
+            runningBalance = isDevirRecord(record) ? signedAmount(record) : runningBalance + signedAmount(record);
+            balanceMap.set(record.id, runningBalance);
+        }
+
+        return { sortedRecords, balanceMap };
+    };
+    const calculateClosingBalance = (sourceRecords: BankRecord[]) => {
+        if (sourceRecords.length === 0) return 0;
+        const devirRecords = sourceRecords
+            .filter(isDevirRecord)
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        const latestDevir = devirRecords[devirRecords.length - 1];
+        const recordsToCalculate = latestDevir
+            ? sourceRecords.filter(record => record.id === latestDevir.id || new Date(record.date).getTime() >= new Date(latestDevir.date).getTime())
+            : sourceRecords;
+        const { sortedRecords, balanceMap } = buildBalanceMap(recordsToCalculate);
+        return sortedRecords.length > 0 ? balanceMap.get(sortedRecords[0].id) ?? 0 : 0;
+    };
     // --- Data Fetching ---
     const fetchData = async () => {
         setLoading(true);
-        const startOfYear = new Date(currentDate.getFullYear(), 0, 1).toISOString();
-        const endOfYear = new Date(currentDate.getFullYear(), 11, 31, 23, 59, 59).toISOString();
+        const year = currentDate.getFullYear();
+        const previousYear = currentDate.getFullYear() - 1;
+        const startOfPreviousYear = `${previousYear}-01-01`;
+        const endOfPreviousYear = `${previousYear}-12-31`;
+        const startOfYear = `${year}-01-01`;
+        const endOfYear = `${year}-12-31`;
 
         try {
             // 1. Fetch Categories with Descriptions
-            const { data: catData, error: catError } = await supabase
-                .from('financial_categories')
-                .select(`
-          id, 
-          title, 
-          type,
-          financial_category_descriptions (
-            id,
-            description
-          )
-        `)
-                .order('title');
-
-            if (catError) throw catError;
-
-            if (catData) {
-                const formattedCategories: CategoryOption[] = catData.map((c: any) => ({
-                    id: c.id,
-                    title: c.title,
-                    type: c.type,
-                    descriptions: c.financial_category_descriptions || []
-                }));
-                setCategories(formattedCategories);
-            }
+            const formattedCategories = await fetchFinanceCategories();
+            setCategories(formattedCategories);
 
             // 2. Fetch Automation Rules
             const { data: ruleData } = await supabase.from('category_automation_rules').select('*');
             setAutomationRules(ruleData || []);
 
-            let calculatedOpening = 0;
-            const { data: allPrevRecords } = await supabase
+            const { data: previousRecordData, error: previousError } = await supabase
                 .from('vakifbank_book')
-                .select('amount, type')
-                .lt('date', startOfYear);
+                .select('*')
+                .gte('date', startOfPreviousYear)
+                .lte('date', endOfPreviousYear);
 
-            if (allPrevRecords) {
-                calculatedOpening = allPrevRecords.reduce((acc, curr) => {
-                    return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
-                }, 0);
-            }
-            setOpeningBalance(calculatedOpening);
+            if (previousError) throw previousError;
 
             // 3. Fetch Selected Year Transactions
             const { data: recordData, error } = await supabase
@@ -193,7 +223,50 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                 .order('date', { ascending: false });
 
             if (error) throw error;
-            setRecords(recordData || []);
+            let currentRecords = (recordData || []) as BankRecord[];
+            const previousRecords = (previousRecordData || []) as BankRecord[];
+
+            if (canEdit && previousRecords.length > 0) {
+                const previousClosingBalance = Number(calculateClosingBalance(previousRecords).toFixed(2));
+                const devirType: 'income' | 'expense' = previousClosingBalance >= 0 ? 'income' : 'expense';
+                const devirAmount = Math.abs(previousClosingBalance);
+                const existingAnnualDevir = currentRecords.find(record => isAnnualDevirRecord(record, year));
+                const devirPayload = {
+                    date: `${year}-01-01`,
+                    description: `${year} Devir`,
+                    amount: devirAmount,
+                    type: devirType,
+                    category_id: null,
+                    category_name: 'Devir',
+                    installment_info: null
+                };
+
+                if (existingAnnualDevir) {
+                    const currentSigned = Number(signedAmount(existingAnnualDevir).toFixed(2));
+                    if (Math.abs(currentSigned - previousClosingBalance) >= 0.01) {
+                        const { data: updatedDevir, error: updateDevirError } = await supabase
+                            .from('vakifbank_book')
+                            .update(devirPayload)
+                            .eq('id', existingAnnualDevir.id)
+                            .select('*')
+                            .single();
+
+                        if (updateDevirError) throw updateDevirError;
+                        currentRecords = currentRecords.map(record => record.id === existingAnnualDevir.id ? updatedDevir as BankRecord : record);
+                    }
+                } else {
+                    const { data: insertedDevir, error: insertDevirError } = await supabase
+                        .from('vakifbank_book')
+                        .insert(devirPayload)
+                        .select('*')
+                        .single();
+
+                    if (insertDevirError) throw insertDevirError;
+                    currentRecords = [insertedDevir as BankRecord, ...currentRecords];
+                }
+            }
+
+            setRecords(currentRecords);
 
         } catch (err: any) {
             console.error('Veri çekme hatası:', err);
@@ -260,10 +333,13 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
         if (!file) return;
 
         const reader = new FileReader();
-        reader.onload = (evt) => {
+        reader.onload = async (evt) => {
             const bstr = evt.target?.result;
             if (bstr) {
                 try {
+                    const uploadCategories = await fetchFinanceCategories();
+                    setCategories(uploadCategories);
+
                     const wb = XLSX.read(bstr, { type: 'array' });
                     const wsname = wb.SheetNames[0];
                     const ws = wb.Sheets[wsname];
@@ -386,7 +462,7 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
 
                         if (amountFound && amount !== 0) {
                             const typeText = typeIdx !== -1 && row[typeIdx] ? String(row[typeIdx]).toLocaleLowerCase('tr-TR') : '';
-                            const type: 'income' | 'expense' = typeText.includes('gider') || typeText.includes('expense')
+                            let type: 'income' | 'expense' = typeText.includes('gider') || typeText.includes('expense')
                                 ? 'expense'
                                 : typeText.includes('gelir') || typeText.includes('income')
                                     ? 'income'
@@ -397,11 +473,12 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                             let detectedSubCategoryId = '';
 
                             const categoryTitle = categoryIdx !== -1 && row[categoryIdx] ? String(row[categoryIdx]).trim() : '';
-                            const matchedCategory = categoryTitle ? categories.find(c => c.title === categoryTitle && c.type === type) : undefined;
+                            const matchedCategory = categoryTitle ? findCategoryByTitle(categoryTitle, type, uploadCategories) : undefined;
                             if (matchedCategory) {
+                                type = matchedCategory.type;
                                 detectedCategoryId = matchedCategory.id;
                                 const subCategoryTitle = subCategoryIdx !== -1 && row[subCategoryIdx] ? String(row[subCategoryIdx]).trim() : '';
-                                detectedSubCategoryId = matchedCategory.descriptions.find(d => d.description === subCategoryTitle)?.id || '';
+                                detectedSubCategoryId = matchedCategory.descriptions.find(d => normalizeDottedIForCompare(d.description) === normalizeDottedIForCompare(subCategoryTitle))?.id || '';
                             }
 
                             const normDesc = desc.toLocaleUpperCase('tr-TR');
@@ -703,9 +780,9 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
     };
 
     // Stats
-    const totalIncome = records.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
-    const totalExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
-    const balance = openingBalance + totalIncome - totalExpense;
+    const movementRecords = records.filter(record => !isDevirRecord(record));
+    const totalIncome = movementRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
+    const totalExpense = movementRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
 
     const filteredRecords = records.filter(r =>
         r.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -714,20 +791,12 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
 
     const selectedCategory = categories.find(c => c.id === formData.categoryId);
 
-    let runningBalance = openingBalance;
-    const balanceByRecordId = new Map<string, number>();
-    [...filteredRecords]
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-        .forEach(record => {
-            runningBalance += record.type === 'income' ? record.amount : -record.amount;
-            balanceByRecordId.set(record.id, runningBalance);
-        });
-
-    const displayedRecords = [...filteredRecords]
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const { sortedRecords: displayedRecords } = buildBalanceMap(filteredRecords);
+    const { sortedRecords: allDisplayedRecords, balanceMap: balanceByRecordId } = buildBalanceMap(records);
+    const totalBalance = allDisplayedRecords.length > 0 ? balanceByRecordId.get(allDisplayedRecords[0].id) ?? 0 : 0;
 
     const handleDownloadExcel = () => {
-        const exportRows = filteredRecords.map(record => {
+        const exportRows = displayedRecords.map(record => {
             const descriptionParts = record.description ? record.description.split(' - ') : [];
             const subCategoryDisplay = descriptionParts[0] || '';
             const periodDisplay = descriptionParts.length > 1 ? descriptionParts.slice(-1)[0] : '';
@@ -738,7 +807,7 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                 'Alt Kategori': subCategoryDisplay,
                 Dönem: periodDisplay,
                 Taksit: record.installment_info || '',
-                Tutar: record.type === 'income' ? record.amount : -record.amount,
+                Tutar: signedAmount(record),
                 Bakiye: balanceByRecordId.get(record.id) ?? 0,
                 İşlem: ''
             };
@@ -778,14 +847,6 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
-                    <div className="text-right hidden md:block">
-                        <div className="text-xs text-slate-500 uppercase font-bold">Devreden Bakiye</div>
-                        <div className={`font-mono font-bold ${openingBalance >= 0 ? 'text-slate-700 dark:text-slate-300' : 'text-red-600'}`}>
-                            {formatCurrency(openingBalance)}
-                        </div>
-                    </div>
-                    <div className="h-8 w-px bg-slate-200 dark:bg-slate-700 hidden md:block"></div>
-
                     {/* Hidden File Input */}
                     <input
                         type="file"
@@ -837,8 +898,8 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-5 rounded-2xl flex flex-col shadow-sm">
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Toplam Bakiye</span>
-                    <div className={`text-3xl font-bold font-mono ${balance >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
-                        {formatCurrency(balance)}
+                    <div className={`text-2xl font-bold font-mono ${totalBalance >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
+                        {formatCurrency(totalBalance)}
                     </div>
                 </div>
                 <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800 p-5 rounded-2xl flex flex-col">
@@ -874,22 +935,22 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                 {loading ? (
                     <div className="p-12 text-center text-slate-500">Yükleniyor...</div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse table-fixed min-w-[1180px]">
+                    <div className="overflow-x-auto sm:overflow-visible">
+                        <table className="w-full text-left border-collapse table-fixed text-xs sm:text-sm">
                             <colgroup>
-                                <col className="w-12" />
-                                <col className="w-40" />
-                                <col className="w-44" />
-                                <col className="w-56" />
-                                <col className="w-36" />
-                                <col className="w-24" />
-                                <col className="w-36" />
-                                <col className="w-36" />
-                                <col className="w-24" />
+                                <col className="w-8 sm:w-12" />
+                                <col className="w-[20%] sm:w-[14%]" />
+                                <col className="w-[24%] sm:w-[17%]" />
+                                <col className="hidden sm:table-column sm:w-[22%]" />
+                                <col className="hidden md:table-column md:w-[14%]" />
+                                <col className="hidden lg:table-column lg:w-[8%]" />
+                                <col className="w-[24%] sm:w-[15%]" />
+                                <col className="w-[24%] sm:w-[15%]" />
+                                <col className="w-[10%] sm:w-[7%]" />
                             </colgroup>
                             <thead>
                                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-500 uppercase">
-                                    <th className="p-4">
+                                    <th className="p-2 sm:p-4">
                                         <input
                                             type="checkbox"
                                             className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
@@ -897,24 +958,17 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                             onChange={toggleSelectAll}
                                         />
                                     </th>
-                                    <th className="p-4">Tarih</th>
-                                    <th className="p-4">Kategori</th>
-                                    <th className="p-4">Alt Kategori</th>
-                                    <th className="p-4">Dönem</th>
-                                    <th className="p-4 text-center">Taksit</th>
-                                    <th className="p-4 text-right">Tutar</th>
-                                    <th className="p-4 text-right">Bakiye</th>
-                                    <th className="p-4 text-center">İşlem</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs">Tarih</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs">Kategori</th>
+                                    <th className="hidden sm:table-cell p-2 sm:p-4 text-[10px] sm:text-xs">Alt Kategori</th>
+                                    <th className="hidden md:table-cell p-2 sm:p-4">Dönem</th>
+                                    <th className="hidden lg:table-cell p-2 sm:p-4 text-center">Taksit</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs text-right">Tutar</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs text-right">Bakiye</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs text-center">İşlem</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                <tr className="bg-slate-50/50 dark:bg-slate-900/30 italic text-slate-500">
-                                    <td className="p-4"></td>
-                                    <td className="p-4 text-xs" colSpan={6}>Devreden Bakiye</td>
-                                    <td className="p-4 text-sm font-mono font-bold text-right">{formatCurrency(openingBalance)}</td>
-                                    <td className="p-4"></td>
-                                </tr>
-
                                 {filteredRecords.length > 0 ? (
                                     displayedRecords.map((record, index) => {
                                         const isIncome = record.type === 'income';
@@ -931,7 +985,7 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                         return (
                                             <React.Fragment key={record.id}>
                                                 <tr className={`transition-colors ${selectedIds.has(record.id) ? 'bg-blue-50/50 dark:bg-blue-900/10' : isLatestMonthRow ? 'bg-slate-100 dark:bg-slate-800/70 border-l-4 border-l-slate-400 dark:border-l-slate-500' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
-                                                    <td className="p-4">
+                                                    <td className="p-2 sm:p-4">
                                                         <input
                                                             type="checkbox"
                                                             className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
@@ -939,33 +993,33 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                                             onChange={() => toggleSelectRecord(record.id)}
                                                         />
                                                     </td>
-                                                    <td className="p-4 text-sm text-slate-600 dark:text-slate-300 font-mono">
+                                                    <td className="p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-300 font-mono break-words">
                                                         {formatDate(record.date)}
                                                     </td>
-                                                    <td className="p-4">
-                                                        <span className={`text-xs px-2 py-1 rounded border ${isIncome
+                                                    <td className="p-2 sm:p-4">
+                                                        <span className={`inline-block max-w-full break-words text-[10px] sm:text-xs px-1.5 sm:px-2 py-1 rounded border ${isIncome
                                                             ? 'bg-green-50 text-green-700 border-green-200'
                                                             : 'bg-red-50 text-red-700 border-red-200'
                                                             }`}>
                                                             {record.category_name}
                                                         </span>
                                                     </td>
-                                                    <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
+                                                    <td className="hidden sm:table-cell p-2 sm:p-4 text-xs sm:text-sm font-medium text-slate-900 dark:text-white break-words">
                                                         {subCategoryDisplay}
                                                     </td>
-                                                    <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
+                                                    <td className="hidden md:table-cell p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-400 break-words">
                                                         {periodDisplay}
                                                     </td>
-                                                    <td className="p-4 text-center text-xs text-slate-500">
+                                                    <td className="hidden lg:table-cell p-2 sm:p-4 text-center text-xs text-slate-500">
                                                         {record.installment_info || '-'}
                                                     </td>
-                                                    <td className={`p-4 text-right font-bold text-sm ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
+                                                    <td className={`p-2 sm:p-4 text-right font-bold text-xs sm:text-sm break-words ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
                                                         {isIncome ? '+' : '-'}{formatCurrency(record.amount)}
                                                     </td>
-                                                    <td className="p-4 text-right font-mono text-sm font-extrabold text-slate-900 dark:text-white">
+                                                    <td className="p-2 sm:p-4 text-right font-mono text-xs sm:text-sm font-extrabold text-slate-900 dark:text-white break-words">
                                                         {formatCurrency(rowBalance)}
                                                     </td>
-                                                    <td className="p-4 text-center">
+                                                    <td className="p-2 sm:p-4 text-center">
                                                         {canEdit && (
                                                             <button
                                                                 onClick={() => handleDelete(record.id)}
@@ -1073,7 +1127,6 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                             </button>
                                         </th>
                                         <th className="p-3 w-28">Tarih</th>
-                                        <th className="p-3 min-w-[200px]">Açıklama</th>
                                         <th className="p-3 w-24 text-right">Tutar</th>
                                         <th className="p-3 w-24 text-center">Tür</th>
                                         <th className="p-3 w-40">Kategori</th>
@@ -1100,11 +1153,8 @@ const Vakifbank: React.FC<VakifbankProps> = ({ canEdit = true }) => {
                                                         </button>
                                                     </td>
                                                     <td className="p-3 font-mono text-slate-600 dark:text-slate-300 align-middle">{row.date}</td>
-                                                    <td className="p-3 text-slate-900 dark:text-white align-middle truncate max-w-[200px]" title={row.description}>
-                                                        {row.description}
-                                                    </td>
-                                                    <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-blue-600'}`}>
-                                                        {row.type === 'expense' ? '-' : ''}{formatCurrency(row.amount)}
+                                                    <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-green-600'}`}>
+                                                        {row.type === 'expense' ? '-' : '+'}{formatCurrency(row.amount)}
                                                     </td>
                                                     <td className="p-2 align-middle">
                                                         <select

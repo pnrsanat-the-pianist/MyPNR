@@ -5,6 +5,8 @@ import {
   RefreshCcw, ArrowRight
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { syncBranchStudentsToFinance, syncRefundStudentsToFinance } from '../../lib/financeRefundSync';
+import { makeDottedIReadable } from '../../lib/readableText';
 
 // --- Types ---
 type CategoryType = 'income' | 'expense';
@@ -174,6 +176,15 @@ const FinanceCategories: React.FC<FinanceCategoriesProps> = ({ canEdit = true })
   const fetchData = async () => {
     setLoading(true);
     try {
+      if (canEdit) {
+        try {
+          await syncRefundStudentsToFinance();
+          await syncBranchStudentsToFinance();
+        } catch (syncError) {
+          console.warn('Finans öğrenci senkronizasyonu yapılamadı:', syncError);
+        }
+      }
+
       // 1. Fetch Categories from DB
       const { data: catData, error: catError } = await supabase
         .from('financial_categories')
@@ -195,7 +206,7 @@ const FinanceCategories: React.FC<FinanceCategoriesProps> = ({ canEdit = true })
         type: cat.type as CategoryType,
         descriptions: (cat.financial_category_descriptions || []).map((d: any) => ({
           id: d.id,
-          text: d.description
+          text: makeDottedIReadable(d.description)
         })).sort((a: any, b: any) => a.text.localeCompare(b.text))
       }));
 
@@ -243,6 +254,11 @@ const FinanceCategories: React.FC<FinanceCategoriesProps> = ({ canEdit = true })
 
       if (type === 'income') setNewIncomeTitle('');
       else setNewExpenseTitle('');
+
+      if (type === 'income') {
+        await syncBranchStudentsToFinance();
+        await fetchData();
+      }
 
     } catch (err: any) {
       alert("Kategori eklenemedi: " + err.message);

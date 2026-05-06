@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import * as XLSX from 'xlsx';
+import { normalizeDottedIForCompare } from '../../lib/readableText';
+import { fetchFinanceCategories } from '../../lib/financeCategories';
 
 // --- Types ---
 interface CashRecord {
@@ -18,6 +20,7 @@ interface CashRecord {
     amount: number;
     description: string;
     installment_info?: string;
+    created_at?: string;
 }
 
 interface CategoryDescription {
@@ -41,6 +44,7 @@ interface ImportedRow {
     isSelected: boolean;
     categoryId: string;
     subCategoryId: string;
+    subCategoryText?: string;
     targetMonth: number;
     targetYear: number;
     installments: number;
@@ -107,6 +111,33 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
             subCategory: isPeriod ? (parts.slice(0, -1).join(' - ') || '-') : parts.join(' - '),
             period: isPeriod ? lastPart : '-'
         };
+    };
+
+    const normalizeLookupText = (value: any) => {
+        return String(value ?? '')
+            .replace(/\u00A0/g, ' ')
+            .trim()
+            .replace(/\s+/g, ' ')
+            .toLocaleLowerCase('tr-TR');
+    };
+
+    const normalizeLookupKey = (value: any) => {
+        return normalizeLookupText(value)
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/ı/g, 'i')
+            .replace(/[^a-z0-9]/g, '');
+    };
+
+    const getExcelValue = (row: Record<string, any>, possibleKeys: string[]) => {
+        const normalizedKeys = possibleKeys.map(normalizeLookupKey);
+        const match = Object.entries(row).find(([key]) => normalizedKeys.includes(normalizeLookupKey(key)));
+        return match ? match[1] : '';
+    };
+
+    const findSubCategoryByDescription = (category: CategoryOption | undefined, description: string) => {
+        const normalizedDescription = normalizeDottedIForCompare(description);
+        return category?.descriptions.find(d => normalizeDottedIForCompare(d.description) === normalizedDescription);
     };
 
     const getMonthName = (date: Date) => {
@@ -186,36 +217,14 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
     const fetchData = async () => {
         setLoading(true);
         // Fetch the entire year
-        const startOfYear = new Date(currentDate.getFullYear(), 0, 1).toISOString();
-        const endOfYear = new Date(currentDate.getFullYear(), 11, 31, 23, 59, 59).toISOString();
+        const year = currentDate.getFullYear();
+        const startOfYear = `${year}-01-01`;
+        const endOfYear = `${year}-12-31`;
 
         try {
             // 1. Fetch Categories AND their descriptions (sub-items)
-            const { data: catData, error: catError } = await supabase
-                .from('financial_categories')
-                .select(`
-          id, 
-          title, 
-          type,
-          financial_category_descriptions (
-            id,
-            description
-          )
-        `)
-                .order('title');
-
-            if (catError) throw catError;
-
-            // Transform data to match interface
-            if (catData) {
-                const formattedCategories: CategoryOption[] = catData.map((c: any) => ({
-                    id: c.id,
-                    title: c.title,
-                    type: c.type,
-                    descriptions: c.financial_category_descriptions || []
-                }));
-                setCategories(formattedCategories);
-            }
+            const formattedCategories = await fetchFinanceCategories();
+            setCategories(formattedCategories);
 
             // 2. Calculate Opening Balance (Sum of all records BEFORE this year)
             let calculatedOpening = 0;
@@ -237,7 +246,8 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                 .select('*')
                 .gte('date', startOfYear)
                 .lte('date', endOfYear)
-                .order('date', { ascending: false });
+                .order('date', { ascending: false })
+                .order('created_at', { ascending: false });
 
             if (error) throw error;
             setRecords(recordData || []);
@@ -294,7 +304,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         let subCatId = '';
         const { subCategory: subCatDesc } = parseDescriptionParts(record.description);
         if (subCatDesc !== '-' && category) {
-            const foundSub = category.descriptions.find(d => d.description === subCatDesc);
+            const foundSub = findSubCategoryByDescription(category, subCatDesc);
             if (foundSub) subCatId = foundSub.id;
         }
 
@@ -494,29 +504,43 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         if (!file || !canEdit) return;
 
         const reader = new FileReader();
-        reader.onload = (evt) => {
+        reader.onload = async (evt) => {
             try {
                 const bstr = evt.target?.result;
                 if (!bstr) return;
+
+                const uploadCategories = await fetchFinanceCategories();
+                setCategories(uploadCategories);
+                const findUploadCategoryByTitle = (title: string, preferredType: 'income' | 'expense') => {
+                    const normalizedTitle = normalizeDottedIForCompare(title);
+                    return uploadCategories.find(c => c.type === preferredType && normalizeDottedIForCompare(c.title) === normalizedTitle)
+                        || uploadCategories.find(c => normalizeDottedIForCompare(c.title) === normalizedTitle);
+                };
+                const findUploadSubCategoryByDescription = (category: CategoryOption | undefined, description: string) => {
+                    const normalizedDescription = normalizeDottedIForCompare(description);
+                    return category?.descriptions.find(d => normalizeDottedIForCompare(d.description) === normalizedDescription);
+                };
 
                 const wb = XLSX.read(bstr, { type: 'array' });
                 const ws = wb.Sheets[wb.SheetNames[0]];
                 const data: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
                 const parsedRows = data.map(row => {
-                    const typeText = String(row.Tip || row.tip || '').toLocaleLowerCase('tr-TR');
-                    const type: 'income' | 'expense' = typeText.includes('gider') || typeText.includes('expense') ? 'expense' : 'income';
-                    const categoryName = String(row.Kategori || row.kategori || '').trim();
-                    const category = categories.find(c => c.title === categoryName && c.type === type);
-                    const amount = Math.abs(parseTurkishAmount(row.Tutar ?? row.tutar));
-                    const date = normalizeExcelDate(row.Tarih ?? row.tarih);
-                    const fullDescription = String(row.Açıklama || row.aciklama || '').trim();
-                    const subCategory = String(row['Alt Kategori'] || row.altKategori || '').trim();
-                    const period = String(row.Dönem || row.Donem || row.donem || '').trim();
+                    const typeText = String(getExcelValue(row, ['Tip', 'Tür', 'Tur', 'Type'])).toLocaleLowerCase('tr-TR');
+                    let type: 'income' | 'expense' = typeText.includes('gider') || typeText.includes('expense') ? 'expense' : 'income';
+                    const categoryName = String(getExcelValue(row, ['Kategori', 'Category'])).trim();
+                    let category = findUploadCategoryByTitle(categoryName, type);
+                    if (category) type = category.type;
+                    const amount = Math.abs(parseTurkishAmount(getExcelValue(row, ['Tutar', 'Amount'])));
+                    const date = normalizeExcelDate(getExcelValue(row, ['Tarih', 'Date']));
+                    const fullDescription = String(getExcelValue(row, ['Açıklama', 'Aciklama', 'Description'])).trim();
+                    const subCategory = String(getExcelValue(row, ['Alt Kategori', 'AltKategori', 'Sub Category', 'SubCategory'])).trim();
+                    const period = String(getExcelValue(row, ['Dönem', 'Donem', 'Period'])).trim();
                     const parsedDescription = parseDescriptionParts(fullDescription);
-                    const effectiveSubCategory = parsedDescription.subCategory !== '-' ? parsedDescription.subCategory : subCategory;
+                    const effectiveSubCategory = subCategory || (parsedDescription.period !== '-' ? parsedDescription.subCategory : '');
                     const effectivePeriod = period || (parsedDescription.period !== '-' ? parsedDescription.period : '');
                     const { targetMonth, targetYear } = parsePeriodText(effectivePeriod, date);
+                    const matchedSubCategory = findUploadSubCategoryByDescription(category, effectiveSubCategory);
 
                     return {
                         id: Math.random().toString(36).substr(2, 9),
@@ -526,11 +550,12 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                         description: effectiveSubCategory || fullDescription || 'Genel',
                         isSelected: true,
                         categoryId: category?.id || '',
-                        subCategoryId: category?.descriptions.find(d => d.description === effectiveSubCategory)?.id || '',
+                        subCategoryId: matchedSubCategory?.id || '',
+                        subCategoryText: effectiveSubCategory || undefined,
                         targetMonth,
                         targetYear,
-                        installments: Math.max(1, parseInt(String(row.Taksit || row.taksit || '1').split('/')[1] || String(row.Taksit || row.taksit || '1'), 10) || 1),
-                        installmentInfo: String(row.Taksit || row.taksit || '').trim() || undefined
+                        installments: Math.max(1, parseInt(String(getExcelValue(row, ['Taksit', 'Installment']) || '1').split('/')[1] || String(getExcelValue(row, ['Taksit', 'Installment']) || '1'), 10) || 1),
+                        installmentInfo: String(getExcelValue(row, ['Taksit', 'Installment'])).trim() || undefined
                     };
                 }).filter(row => row.date && row.amount > 0);
 
@@ -575,7 +600,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         const invalidRows = selectedRows.filter(row => {
             if (!row.categoryId) return true;
             const category = categories.find(c => c.id === row.categoryId);
-            return !!(category && category.descriptions.length > 0 && !row.subCategoryId);
+            return !!(category && category.descriptions.length > 0 && !row.subCategoryId && !row.subCategoryText);
         });
 
         if (invalidRows.length > 0) {
@@ -604,7 +629,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                         category_id: row.categoryId,
                         category_name: category?.title || 'Diğer',
                         amount: monthlyAmount,
-                        description: `${subCategory?.description || row.description || 'Genel'} - ${periodString}`,
+                        description: `${subCategory?.description || row.subCategoryText || row.description || 'Genel'} - ${periodString}`,
                         installment_info: installments > 1 ? `${i + 1}/${installments}` : (row.installmentInfo || null)
                     });
                 }
@@ -634,21 +659,34 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         r.date.includes(searchTerm)
     );
 
+    const compareRecordsForBalance = (a: CashRecord, b: CashRecord) => {
+        const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+        if (dateDiff !== 0) return dateDiff;
+
+        const createdAtDiff = new Date(a.created_at || '').getTime() - new Date(b.created_at || '').getTime();
+        if (!isNaN(createdAtDiff) && createdAtDiff !== 0) return createdAtDiff;
+
+        return a.id.localeCompare(b.id);
+    };
+
+    const yearIncome = records.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
+    const yearExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
+    const currentBalance = openingBalance + yearIncome - yearExpense;
+
     let runningBalance = openingBalance;
     const balanceByRecordId = new Map<string, number>();
-    [...filteredBySearch]
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    [...records]
+        .sort(compareRecordsForBalance)
         .forEach(record => {
             runningBalance += record.type === 'income' ? record.amount : -record.amount;
             balanceByRecordId.set(record.id, runningBalance);
         });
 
     const displayedRecords = [...filteredBySearch]
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        .sort((a, b) => compareRecordsForBalance(b, a));
 
     const summaryIncome = filteredBySearch.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
     const summaryExpense = filteredBySearch.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
-    const summaryNet = summaryIncome - summaryExpense;
 
     // Selected Category Helper for Modal
     const selectedCategory = categories.find(c => c.id === formData.categoryId);
@@ -738,8 +776,8 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                     </div>
                     <div>
                         <p className="text-xs font-bold text-slate-500 uppercase">Güncel Bakiye</p>
-                        <p className={`text-2xl font-bold ${(openingBalance + summaryNet) >= 0 ? 'text-slate-800 dark:text-white' : 'text-red-600'}`}>
-                            {formatCurrency(openingBalance + summaryNet)}
+                        <p className={`text-2xl font-bold ${currentBalance >= 0 ? 'text-slate-800 dark:text-white' : 'text-red-600'}`}>
+                            {formatCurrency(currentBalance)}
                         </p>
                     </div>
                 </div>
@@ -779,22 +817,22 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
 
             {/* Table */}
             <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse table-fixed min-w-[1180px]">
+                <div className="overflow-x-auto sm:overflow-visible">
+                    <table className="w-full text-left border-collapse table-fixed text-xs sm:text-sm">
                         <colgroup>
-                            <col className="w-12" />
-                            <col className="w-40" />
-                            <col className="w-44" />
-                            <col className="w-56" />
-                            <col className="w-36" />
-                            <col className="w-24" />
-                            <col className="w-36" />
-                            <col className="w-36" />
-                            <col className="w-24" />
+                            <col className="w-8 sm:w-12" />
+                            <col className="w-[18%] sm:w-[13%]" />
+                            <col className="w-[21%] sm:w-[15%]" />
+                            <col className="w-[22%] sm:w-[19%]" />
+                            <col className="hidden md:table-column md:w-[12%]" />
+                            <col className="hidden lg:table-column lg:w-[8%]" />
+                            <col className="w-[21%] sm:w-[13%]" />
+                            <col className="hidden md:table-column md:w-[13%]" />
+                            <col className="w-[10%] sm:w-[7%]" />
                         </colgroup>
                         <thead>
                             <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-                                <th className="p-4">
+                                <th className="p-2 sm:p-4">
                                     <input
                                         type="checkbox"
                                         className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
@@ -802,23 +840,24 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                         onChange={toggleSelectAll}
                                     />
                                 </th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase">Tarih</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase">Kategori</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase">Alt Kategori</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase">Dönem</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-center">Taksit</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-right">Tutar</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-right">Bakiye</th>
-                                <th className="p-4 text-xs font-bold text-slate-500 uppercase text-center">İşlem</th>
+                                <th className="p-2 sm:p-4 text-[10px] sm:text-xs font-bold text-slate-500 uppercase">Tarih</th>
+                                <th className="p-2 sm:p-4 text-[10px] sm:text-xs font-bold text-slate-500 uppercase">Kategori</th>
+                                <th className="p-2 sm:p-4 text-[10px] sm:text-xs font-bold text-slate-500 uppercase">Alt Kategori</th>
+                                <th className="hidden md:table-cell p-2 sm:p-4 text-xs font-bold text-slate-500 uppercase">Dönem</th>
+                                <th className="hidden lg:table-cell p-2 sm:p-4 text-xs font-bold text-slate-500 uppercase text-center">Taksit</th>
+                                <th className="p-2 sm:p-4 text-[10px] sm:text-xs font-bold text-slate-500 uppercase text-right">Tutar</th>
+                                <th className="hidden md:table-cell p-2 sm:p-4 text-xs font-bold text-slate-500 uppercase text-right">Bakiye</th>
+                                <th className="p-2 sm:p-4 text-[10px] sm:text-xs font-bold text-slate-500 uppercase text-center">İşlem</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                             {/* Opening Balance Row */}
                             <tr className="bg-slate-50/50 dark:bg-slate-900/30 italic text-slate-500">
-                                <td className="p-4"></td>
-                                <td className="p-4 text-xs" colSpan={6}>Devreden Bakiye</td>
-                                <td className="p-4 text-sm font-mono font-bold text-right">{formatCurrency(openingBalance)}</td>
-                                <td className="p-4"></td>
+                                <td className="p-2 sm:p-4"></td>
+                                <td className="p-2 sm:p-4 text-xs" colSpan={4}>Devreden Bakiye</td>
+                                <td className="p-2 sm:p-4 text-xs sm:text-sm font-mono font-bold text-right">{formatCurrency(openingBalance)}</td>
+                                <td className="hidden md:table-cell p-2 sm:p-4"></td>
+                                <td className="p-2 sm:p-4"></td>
                             </tr>
 
                             {filteredBySearch.length === 0 ? (
@@ -851,7 +890,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                         ? 'bg-slate-100 dark:bg-slate-800/70 border-l-4 border-l-slate-400 dark:border-l-slate-500'
                                                         : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}
                                             >
-                                                <td className="p-4">
+                                                <td className="p-2 sm:p-4">
                                                     <input
                                                         type="checkbox"
                                                         className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
@@ -859,24 +898,24 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                         onChange={() => toggleSelectRecord(record.id)}
                                                     />
                                                 </td>
-                                                <td className="p-4 text-sm text-slate-600 dark:text-slate-300 font-mono">
+                                                <td className="p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-300 font-mono break-words">
                                                     {formatDate(record.date)}
                                                 </td>
-                                                <td className="p-4">
-                                                    <span className={`text-xs px-2 py-1 rounded border ${isIncome
+                                                <td className="p-2 sm:p-4">
+                                                    <span className={`inline-block max-w-full break-words text-[10px] sm:text-xs px-1.5 sm:px-2 py-1 rounded border ${isIncome
                                                         ? 'bg-green-50 text-green-700 border-green-200'
                                                         : 'bg-red-50 text-red-700 border-red-200'
                                                         }`}>
                                                         {record.category_name}
                                                     </span>
                                                 </td>
-                                                <td className="p-4 text-sm font-medium text-slate-900 dark:text-white">
+                                                <td className="p-2 sm:p-4 text-xs sm:text-sm font-medium text-slate-900 dark:text-white break-words">
                                                     {subCategoryDisplay}
                                                 </td>
-                                                <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
+                                                <td className="hidden md:table-cell p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-400 break-words">
                                                     {periodDisplay}
                                                 </td>
-                                                <td className="p-4 text-center text-xs text-slate-500">
+                                                <td className="hidden lg:table-cell p-2 sm:p-4 text-center text-xs text-slate-500">
                                                     {record.installment_info ? (
                                                         <button
                                                             onClick={(e) => {
@@ -890,13 +929,13 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                         </button>
                                                     ) : '-'}
                                                 </td>
-                                                <td className={`p-4 text-right font-bold text-sm ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
+                                                <td className={`p-2 sm:p-4 text-right font-bold text-xs sm:text-sm break-words ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
                                                     {isIncome ? '+' : '-'}{formatCurrency(record.amount)}
                                                 </td>
-                                                <td className="p-4 text-right font-mono text-sm font-extrabold text-slate-900 dark:text-white">
+                                                <td className="hidden md:table-cell p-2 sm:p-4 text-right font-mono text-xs sm:text-sm font-extrabold text-slate-900 dark:text-white">
                                                     {formatCurrency(rowBalance)}
                                                 </td>
-                                                <td className="p-4 text-center">
+                                                <td className="p-2 sm:p-4 text-center">
                                                     {canEdit && (
                                                         <div className="flex items-center justify-center gap-1">
                                                             <button
@@ -998,7 +1037,6 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                             </button>
                                         </th>
                                         <th className="p-3 w-28">Tarih</th>
-                                        <th className="p-3 min-w-[180px]">Açıklama</th>
                                         <th className="p-3 w-24 text-right">Tutar</th>
                                         <th className="p-3 w-24 text-center">Tür</th>
                                         <th className="p-3 w-40">Kategori</th>
@@ -1010,12 +1048,12 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                     {importedRows
-                                        .filter(row => !hideCategorized || !row.subCategoryId)
+                                        .filter(row => !hideCategorized || (!row.subCategoryId && !row.subCategoryText))
                                         .map((row) => {
                                             const rowCategory = categories.find(c => c.id === row.categoryId);
                                             const isCategoryMissing = !row.categoryId;
                                             const hasSubOptions = rowCategory?.descriptions && rowCategory.descriptions.length > 0;
-                                            const isSubCategoryMissing = hasSubOptions && !row.subCategoryId;
+                                            const isSubCategoryMissing = hasSubOptions && !row.subCategoryId && !row.subCategoryText;
 
                                             return (
                                                 <tr key={row.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 ${!row.isSelected ? 'opacity-50 grayscale' : ''}`}>
@@ -1025,13 +1063,6 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                         </button>
                                                     </td>
                                                     <td className="p-3 font-mono text-slate-600 dark:text-slate-300 align-middle">{row.date}</td>
-                                                    <td className="p-3 text-slate-900 dark:text-white align-middle">
-                                                        <input
-                                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5"
-                                                            value={row.description}
-                                                            onChange={(e) => updateImportRow(row.id, 'description', e.target.value)}
-                                                        />
-                                                    </td>
                                                     <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-green-600'}`}>
                                                         {row.type === 'expense' ? '-' : '+'}{formatCurrency(row.amount)}
                                                     </td>
@@ -1067,7 +1098,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                             onChange={(e) => updateImportRow(row.id, 'subCategoryId', e.target.value)}
                                                             disabled={!row.categoryId}
                                                         >
-                                                            <option value="">Seçiniz...</option>
+                                                            <option value="">{row.subCategoryText || 'Seçiniz...'}</option>
                                                             {rowCategory?.descriptions.map(d => (
                                                                 <option key={d.id} value={d.id}>{d.description}</option>
                                                             ))}

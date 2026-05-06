@@ -5,6 +5,7 @@ import {
     Layers, Tag, Type, AlertCircle, Check, Loader2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { makeDottedIReadable } from '../../lib/readableText';
 
 interface CategoryDescription {
     id: string;
@@ -64,7 +65,7 @@ const CategoryAutomation: React.FC<{ canEdit?: boolean }> = ({ canEdit = true })
                     type: c.type,
                     descriptions: (c.financial_category_descriptions || []).map((d: any) => ({
                         id: d.id,
-                        description: d.description
+                        description: makeDottedIReadable(d.description)
                     }))
                 }));
                 setCategories(formatted);

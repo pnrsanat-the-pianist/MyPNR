@@ -140,6 +140,7 @@ INSERT INTO public.financial_categories (title, type) VALUES
 ('Kira ve Aidat', 'expense'),
 ('Faturalar', 'expense'),
 ('Reklam ve Pazarlama', 'expense'),
+('Ödeme İadesi', 'expense'),
 ('Mutfak ve Temizlik', 'expense'),
 ('Kırtasiye', 'expense'),
 ('Vergiler ve Harçlar', 'expense'),

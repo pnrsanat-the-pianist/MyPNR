@@ -1,13 +1,15 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import {
   UserPlus, Search, Filter, MoreHorizontal, X,
   User, Calendar, MapPin, Layers, GraduationCap,
   Phone, Mail, Briefcase, Users, Plus, Trash2,
   ChevronDown, ChevronRight, Check, HeartPulse, Share2, FileText, Edit,
-  ArrowUpDown, ArrowUp, ArrowDown, RefreshCcw, Upload
+  ArrowUpDown, ArrowUp, ArrowDown, RefreshCcw, Upload, Download
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { syncBranchStudentsToFinance, syncRefundStudentsToFinance } from '../../lib/financeRefundSync';
 
 // --- Types ---
 interface BranchSelection {
@@ -130,6 +132,15 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
   ]);
 
   const [parents, setParents] = useState<ParentInfo[]>([{ ...INITIAL_PARENT }]);
+
+  const syncRefundList = async () => {
+    try {
+      await syncRefundStudentsToFinance();
+      await syncBranchStudentsToFinance();
+    } catch (err) {
+      console.warn('Finans öğrenci senkronizasyonu yapılamadı:', err);
+    }
+  };
 
   // ... (Fetch Data Logic remains same) ...
   const fetchData = async () => {
@@ -271,14 +282,10 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
     return () => window.removeEventListener('hashchange', handleHashFilter);
   }, []);
 
-  // ... (CSV Upload Logic remains same) ...
-  const parseCSVLine = (line: string): string[] => {
-    const regex = /,(?=(?:(?:[^"]*"){2})*[^"]*$)/;
-    return line.split(regex).map(val => val.replace(/^"|"$/g, '').trim());
-  };
-  const cleanValue = (val: string | undefined) => {
-    if (!val) return null;
-    const v = val.trim();
+  // ... (Excel Upload Logic remains same) ...
+  const cleanValue = (val: any) => {
+    if (val === undefined || val === null) return null;
+    const v = String(val).trim();
     if (v === '' || v === '#VALUE!' || v === '#REF!') return null;
     return v;
   };
@@ -286,9 +293,9 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
     if (!val) return null;
     const v = val.trim();
     if (v.includes('-')) return v.split('T')[0];
-    if (v.includes('.')) {
-      const parts = v.split('.');
-      if (parts.length === 3) {
+    if (v.includes('.') || v.includes('/')) {
+      const parts = v.includes('.') ? v.split('.') : v.split('/');
+      if (parts.length === 3 && /^\d+$/.test(parts[1])) {
         let d = parts[0].padStart(2, '0');
         let m = parts[1].padStart(2, '0');
         let y = parts[2];
@@ -304,9 +311,11 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
       'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'jun': '06',
       'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12',
       'ocak': '01', 'şubat': '02', 'mart': '03', 'nisan': '04', 'mayıs': '05', 'haziran': '06',
-      'temmuz': '07', 'ağustos': '08', 'eylül': '09', 'ekim': '10', 'kasım': '11', 'aralık': '12'
+      'temmuz': '07', 'ağustos': '08', 'eylül': '09', 'ekim': '10', 'kasım': '11', 'aralık': '12',
+      'oca': '01', 'şub': '02', 'sub': '02', 'nis': '04', 'haz': '06', 'tem': '07',
+      'ağu': '08', 'agu': '08', 'eyl': '09', 'eki': '10', 'kas': '11', 'ara': '12'
     };
-    const parts = v.split(/\s+/);
+    const parts = v.replace(/[./]/g, ' ').split(/\s+/);
     if (parts.length >= 3) {
       const day = parts[0].padStart(2, '0');
       const monthStr = parts[1].toLowerCase().replace('i̇', 'i').replace('ş', 's').replace('ç', 'c').replace('ö', 'o').replace('ü', 'u').replace('ğ', 'g');
@@ -327,6 +336,101 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
     }
     return null;
   };
+
+  const normalizeLookupKey = (value: any) => String(value ?? '')
+    .trim()
+    .toLocaleLowerCase('tr-TR')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/[^a-z0-9]/g, '');
+
+  const getExcelCell = (row: any[], headers: any[], possibleKeys: string[], fallbackIndex: number) => {
+    const normalizedKeys = possibleKeys.map(normalizeLookupKey);
+    const headerIndex = headers.findIndex(header => normalizedKeys.includes(normalizeLookupKey(header)));
+    return headerIndex >= 0 ? row[headerIndex] : row[fallbackIndex];
+  };
+
+  const normalizeExcelDate = (val: any) => {
+    if (!val) return null;
+    if (val instanceof Date) return val.toISOString().split('T')[0];
+    if (typeof val === 'number') {
+      const parsed = XLSX.SSF.parse_date_code(val);
+      if (parsed) {
+        const date = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
+        return date.toISOString().split('T')[0];
+      }
+    }
+    return parseDate(cleanValue(val));
+  };
+
+  const normalizeStatus = (val: any) => {
+    const normalized = String(val ?? '').trim().toLocaleLowerCase('tr-TR');
+    if (normalized.includes('pasif') || normalized.includes('passive') || normalized.includes('inactive')) return 'inactive';
+    if (normalized.includes('deneme') || normalized.includes('trial')) return 'trial';
+    return 'active';
+  };
+
+  const normalizeYesNo = (val: any, fallback: 'Evet' | 'Hayır') => {
+    const normalized = String(val ?? '').trim().toLocaleLowerCase('tr-TR');
+    if (normalized === 'evet' || normalized === 'yes') return 'Evet';
+    if (normalized === 'hayır' || normalized === 'hayir' || normalized === 'no') return 'Hayır';
+    return fallback;
+  };
+
+  const handleDownloadExcel = () => {
+    if (processedEnrollments.length === 0) {
+      alert('İndirilecek öğrenci kaydı bulunamadı.');
+      return;
+    }
+
+    const exportRows = processedEnrollments.map(item => {
+      const parent1 = item.parents[0];
+      const parent2 = item.parents[1];
+
+      return {
+        'Ad Soyad': item.name,
+        'TC Kimlik': item.tc || '',
+        'Doğum Tarihi': item.dob || '',
+        Adres: item.address || '',
+        Durum: item.status === 'inactive' ? 'Pasif' : item.status === 'trial' ? 'Deneme' : 'Aktif',
+        'Üst Branş': item.mainBranch || '',
+        'Alt Branş': item.subBranch || '',
+        Öğretmen: item.teacher || '',
+        'İlk Ders': item.startDate || '',
+        'MEB Kod': item.mebCode || '',
+        'MEB Tarih': item.mebDate || '',
+        'Sosyal Medya İzni': item.socialMediaApproval || 'Hayır',
+        'Sağlık Sorunu': item.healthCondition || 'Hayır',
+        'Sağlık Detayı': item.healthConditionDetails || '',
+        '1. Veli Ad Soyad': parent1?.name || '',
+        '1. Veli Yakınlık': parent1?.relation || '',
+        '1. Veli Telefon': parent1?.phone || '',
+        '1. Veli TC': parent1?.tc || '',
+        '1. Veli E-Posta': parent1?.email || '',
+        '1. Veli Meslek': parent1?.job || '',
+        '2. Veli Ad Soyad': parent2?.name || '',
+        '2. Veli Yakınlık': parent2?.relation || '',
+        '2. Veli Telefon': parent2?.phone || '',
+        '2. Veli TC': parent2?.tc || '',
+        '2. Veli E-Posta': parent2?.email || '',
+        '2. Veli Meslek': parent2?.job || ''
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+    worksheet['!cols'] = [
+      { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 32 }, { wch: 10 },
+      { wch: 16 }, { wch: 16 }, { wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 14 },
+      { wch: 18 }, { wch: 14 }, { wch: 24 }, { wch: 24 }, { wch: 14 }, { wch: 16 },
+      { wch: 14 }, { wch: 24 }, { wch: 16 }, { wch: 24 }, { wch: 14 }, { wch: 16 },
+      { wch: 14 }, { wch: 24 }, { wch: 16 }
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Öğrenciler');
+    XLSX.writeFile(workbook, `crm-ogrenciler-${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!canEdit) return; // Guard
     const file = e.target.files?.[0];
@@ -334,53 +438,104 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
-      const text = evt.target?.result as string;
-      if (!text) return;
-      const lines = text.split('\n');
+      const fileData = evt.target?.result;
+      if (!fileData) return;
       const studentsToInsert: any[] = [];
       setLoading(true);
       try {
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          if (!line.trim() || line.toLowerCase().startsWith('full_name') || line.toLowerCase().startsWith('create table')) continue;
+        const workbook = XLSX.read(fileData, { type: 'array', cellDates: true });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: true });
+        const headerCandidates = rows[0] || [];
+        const hasHeader = headerCandidates.some(cell => [
+          'Ad Soyad', 'Öğrenci', 'full_name', 'TC Kimlik', 'Üst Branş', 'İlk Ders'
+        ].map(normalizeLookupKey).includes(normalizeLookupKey(cell)));
+        const headers = hasHeader ? headerCandidates : [];
+        const previousStudentValues: Record<string, any> = {};
 
-          const cols = parseCSVLine(line);
-          const fullName = cleanValue(cols[0]);
-          const tcNo = cleanValue(cols[6]);
+        for (let i = hasHeader ? 1 : 0; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row.some(cell => cleanValue(cell))) continue;
 
-          if (fullName && tcNo) {
+          const fullName = cleanValue(getExcelCell(row, headers, ['Ad Soyad', 'Öğrenci', 'Öğrenci Adı', 'full_name', 'full name', 'name'], 0)) || previousStudentValues.fullName;
+          const tcNo = cleanValue(getExcelCell(row, headers, ['TC Kimlik', 'TC', 'TC No', 'tc_no', 'tc no'], 6)) || previousStudentValues.tcNo || null;
+          const subBranch = cleanValue(getExcelCell(row, headers, ['Alt Branş', 'Branş', 'Kategori', 'Ders', 'sub_branch', 'sub branch', 'category'], 2));
+
+          if (fullName && subBranch) {
+            const mainBranch = cleanValue(getExcelCell(row, headers, ['Üst Branş', 'Ana Branş', 'main_branch', 'main branch'], 1))
+              || (['Bale', 'Hi̇phop', 'Modern Dans'].includes(subBranch || '') ? 'Bale / Dans' : 'Enstrüman');
+            const dob = normalizeExcelDate(getExcelCell(row, headers, ['Doğum Tarihi', 'Doğum', 'dob', 'birth date'], 5)) || previousStudentValues.dob || null;
+            const address = cleanValue(getExcelCell(row, headers, ['Adres', 'address'], 7)) || previousStudentValues.address || null;
+            const healthCondition = normalizeYesNo(getExcelCell(row, headers, ['Sağlık Sorunu', 'Sağlık', 'health_condition'], 8), previousStudentValues.healthCondition || 'Hayır');
+            const socialMediaApproval = normalizeYesNo(getExcelCell(row, headers, ['Sosyal Medya İzni', 'Sosyal Medya', 'social_media_approval'], 10), previousStudentValues.socialMediaApproval || 'Hayır');
+            const parent1Name = cleanValue(getExcelCell(row, headers, ['1. Veli Ad Soyad', 'Veli 1 Ad Soyad', 'Veli Ad Soyad', 'parent1_name'], 11)) || previousStudentValues.parent1Name || null;
+            const parent1Relation = cleanValue(getExcelCell(row, headers, ['1. Veli Yakınlık', 'Veli 1 Yakınlık', 'Yakınlık', 'parent1_relation'], 12)) || previousStudentValues.parent1Relation || null;
+            const parent1Job = cleanValue(getExcelCell(row, headers, ['1. Veli Meslek', 'Veli 1 Meslek', 'parent1_job'], 16)) || previousStudentValues.parent1Job || null;
+            const parent1Tc = cleanValue(getExcelCell(row, headers, ['1. Veli TC', 'Veli 1 TC', 'parent1_tc'], 14)) || previousStudentValues.parent1Tc || null;
+            const parent1Phone = cleanValue(getExcelCell(row, headers, ['1. Veli Telefon', 'Veli 1 Telefon', 'Telefon', 'parent1_phone'], 13)) || previousStudentValues.parent1Phone || null;
+            const parent1Email = cleanValue(getExcelCell(row, headers, ['1. Veli E-Posta', 'Veli 1 E-Posta', 'E-Posta', 'parent1_email'], 15)) || previousStudentValues.parent1Email || null;
+            const parent2Name = cleanValue(getExcelCell(row, headers, ['2. Veli Ad Soyad', 'Veli 2 Ad Soyad', 'parent2_name'], 17)) || previousStudentValues.parent2Name || null;
+            const parent2Relation = cleanValue(getExcelCell(row, headers, ['2. Veli Yakınlık', 'Veli 2 Yakınlık', 'parent2_relation'], 18)) || previousStudentValues.parent2Relation || null;
+            const parent2Job = cleanValue(getExcelCell(row, headers, ['2. Veli Meslek', 'Veli 2 Meslek', 'parent2_job'], 22)) || previousStudentValues.parent2Job || null;
+            const parent2Tc = cleanValue(getExcelCell(row, headers, ['2. Veli TC', 'Veli 2 TC', 'parent2_tc'], 20)) || previousStudentValues.parent2Tc || null;
+            const parent2Phone = cleanValue(getExcelCell(row, headers, ['2. Veli Telefon', 'Veli 2 Telefon', 'parent2_phone'], 19)) || previousStudentValues.parent2Phone || null;
+            const parent2Email = cleanValue(getExcelCell(row, headers, ['2. Veli E-Posta', 'Veli 2 E-Posta', 'parent2_email'], 21)) || previousStudentValues.parent2Email || null;
             const student = {
               full_name: fullName,
               tc_no: tcNo,
-              dob: parseDate(cleanValue(cols[5])),
-              address: cleanValue(cols[7]),
-              social_media_approval: cleanValue(cols[10]) || 'Hayır',
-              health_condition: cleanValue(cols[8]) || 'Hayır',
-              health_condition_details: cleanValue(cols[9]),
-              status: cleanValue(cols[3])?.toLowerCase() === 'passive' ? 'inactive' : 'active',
-              main_branch: cleanValue(cols[1]) || (['Bale', 'Hi̇phop', 'Modern Dans'].includes(cleanValue(cols[2]) || '') ? 'Bale / Dans' : 'Enstrüman'),
-              sub_branch: cleanValue(cols[2]),
-              teacher: cleanValue(cols[23]),
-              start_date: parseDate(cleanValue(cols[4])) || new Date().toISOString().split('T')[0],
-              parent1_name: cleanValue(cols[11]),
-              parent1_relation: cleanValue(cols[12]),
-              parent1_job: cleanValue(cols[16]),
-              parent1_tc: cleanValue(cols[14]),
-              parent1_phone: cleanValue(cols[13]),
-              parent1_email: cleanValue(cols[15]),
-              parent2_name: cleanValue(cols[17]),
-              parent2_relation: cleanValue(cols[18]),
-              parent2_job: cleanValue(cols[22]),
-              parent2_tc: cleanValue(cols[20]),
-              parent2_phone: cleanValue(cols[19]),
-              parent2_email: cleanValue(cols[21]),
+              dob,
+              address,
+              social_media_approval: socialMediaApproval,
+              health_condition: healthCondition,
+              health_condition_details: cleanValue(getExcelCell(row, headers, ['Sağlık Detayı', 'Sağlık Açıklama', 'health_condition_details'], 9)),
+              status: normalizeStatus(getExcelCell(row, headers, ['Durum', 'status'], 3)),
+              main_branch: mainBranch,
+              sub_branch: subBranch,
+              teacher: cleanValue(getExcelCell(row, headers, ['Öğretmen', 'teacher'], 23)),
+              start_date: normalizeExcelDate(getExcelCell(row, headers, ['İlk Ders', 'Başlangıç Tarihi', 'start_date', 'start date'], 4)) || new Date().toISOString().split('T')[0],
+              meb_code: cleanValue(getExcelCell(row, headers, ['MEB Kod', 'MEB Kodu', 'meb_code'], -1)),
+              meb_date: normalizeExcelDate(getExcelCell(row, headers, ['MEB Tarih', 'MEB Tarihi', 'meb_date'], -1)),
+              parent1_name: parent1Name,
+              parent1_relation: parent1Relation,
+              parent1_job: parent1Job,
+              parent1_tc: parent1Tc,
+              parent1_phone: parent1Phone,
+              parent1_email: parent1Email,
+              parent2_name: parent2Name,
+              parent2_relation: parent2Relation,
+              parent2_job: parent2Job,
+              parent2_tc: parent2Tc,
+              parent2_phone: parent2Phone,
+              parent2_email: parent2Email,
             };
             studentsToInsert.push(student);
+
+            Object.assign(previousStudentValues, {
+              fullName,
+              tcNo,
+              dob,
+              address,
+              healthCondition,
+              socialMediaApproval,
+              parent1Name,
+              parent1Relation,
+              parent1Job,
+              parent1Tc,
+              parent1Phone,
+              parent1Email,
+              parent2Name,
+              parent2Relation,
+              parent2Job,
+              parent2Tc,
+              parent2Phone,
+              parent2Email
+            });
           }
         }
         if (studentsToInsert.length > 0) {
           const { error } = await supabase.from('students').insert(studentsToInsert);
           if (error) throw error;
+          await syncRefundList();
           alert(`${studentsToInsert.length} öğrenci başarıyla içe aktarıldı.`);
           fetchData();
         } else {
@@ -394,7 +549,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   };
 
   // --- Handlers ---
@@ -411,6 +566,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
     try {
       const { error } = await supabase.from('students').update({ status: newStatus }).eq('id', id);
       if (error) throw error;
+      await syncRefundList();
     } catch (err) {
       console.error('Status update failed', err);
       alert("Durum güncellenirken hata oluştu.");
@@ -428,6 +584,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
         const { error } = await supabase.from('students').delete().eq('id', id);
         if (error) throw error;
         setEnrollments(prev => prev.filter(item => item.id !== id));
+        await syncRefundList();
       } catch (err: any) {
         console.error('Delete Error:', err.message);
         alert('Silme işlemi sırasında hata: ' + err.message);
@@ -555,6 +712,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
         const { error } = await supabase.from('students').insert(rowsToInsert);
         if (error) throw error;
       }
+      await syncRefundList();
       await fetchData();
       handleCloseModal();
     } catch (err: any) {
@@ -635,12 +793,22 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
             />
           </div>
 
-          {/* CSV Upload (Conditional) */}
+          <button
+            onClick={handleDownloadExcel}
+            disabled={loading || processedEnrollments.length === 0}
+            className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 flex items-center gap-2 h-[42px] disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Excel İndir"
+          >
+            <Download size={18} />
+            <span className="hidden lg:inline text-sm font-medium">Excel İndir</span>
+          </button>
+
+          {/* Excel Upload (Conditional) */}
           {canEdit && (
             <div className="relative">
               <input
                 type="file"
-                accept=".csv"
+                accept=".xlsx,.xls,.csv"
                 className="hidden"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
@@ -649,10 +817,10 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
                 onClick={() => fileInputRef.current?.click()}
                 disabled={loading}
                 className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 flex items-center gap-2 h-[42px]"
-                title="CSV İçe Aktar"
+                title="Excel Yükle"
               >
                 <Upload size={18} />
-                <span className="hidden lg:inline text-sm font-medium">CSV Yükle</span>
+                <span className="hidden lg:inline text-sm font-medium">Excel Yükle</span>
               </button>
             </div>
           )}
@@ -960,6 +1128,17 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
                                     <option key={t} value={t}>{t}</option>
                                   ))}
                                 </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-xs text-slate-500 mb-1">İlk Ders</label>
+                                <input
+                                  type="date"
+                                  required={idx === 0}
+                                  className="w-full border rounded-lg p-2 text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                  value={branch.startDate}
+                                  onChange={e => handleBranchChange(idx, 'startDate', e.target.value)}
+                                />
                               </div>
 
                               {/* MEB Info */}
