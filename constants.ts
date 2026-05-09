@@ -125,7 +125,6 @@ export const MENU_ITEMS: NavItem[] = [
       { id: 'denizbank-pos', title: 'Denizbank POS', path: '/finance/denizbank-pos', icon: CreditCard },
       { id: 'vakifbank', title: 'Vakıfbank', path: '/finance/vakifbank', icon: Landmark },
       { id: 'category-automation', title: 'Kategori Otomasyon', path: '/finance/automation', icon: Layers },
-      { id: 'bankalar', title: 'Banka Hesapları', path: '/finance/banks', icon: Landmark },
     ],
   },
   {

@@ -24,6 +24,11 @@ interface DailyLesson {
     type: 'group' | 'individual';
 }
 
+const MONTH_NAMES = [
+    'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+    'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
+];
+
 const AdminDashboard: React.FC = () => {
     const [loading, setLoading] = useState(true);
 
@@ -62,6 +67,65 @@ const AdminDashboard: React.FC = () => {
     const getDayName = (date: Date) => {
         const days = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
         return days[date.getDay()];
+    };
+
+    const getShiftedDate = (dateStr: string, monthOffset: number) => {
+        const [year, month, day] = String(dateStr || '').split('-').map(Number);
+        if (!year || !month || !day) return dateStr;
+
+        const targetMonthIndex = month - 1 + monthOffset;
+        const targetYear = year + Math.floor(targetMonthIndex / 12);
+        const normalizedMonth = ((targetMonthIndex % 12) + 12) % 12;
+        const daysInMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
+        const finalDay = Math.min(day, daysInMonth);
+
+        return new Date(Date.UTC(targetYear, normalizedMonth, finalDay)).toISOString().split('T')[0];
+    };
+
+    const getInstallmentIndex = (installmentInfo?: string) => {
+        const match = String(installmentInfo || '').match(/^(\d+)\s*\//);
+        return match ? Math.max(1, parseInt(match[1], 10) || 1) : 1;
+    };
+
+    const getRecordPeriodFromDescription = (description?: string) => {
+        const parts = String(description || '').split(' - ').map(part => part.trim()).filter(Boolean);
+        const period = parts[parts.length - 1] || '';
+        const [monthText, yearText] = period.split(/\s+/);
+        const monthIndex = MONTH_NAMES.findIndex(month => month.toLocaleLowerCase('tr-TR') === (monthText || '').toLocaleLowerCase('tr-TR'));
+        const yearValue = parseInt(yearText || '', 10);
+
+        return monthIndex !== -1 && !isNaN(yearValue) ? { month: monthIndex, year: yearValue } : null;
+    };
+
+    const getEffectiveInstallmentDate = (record: any) => {
+        const installmentIndex = getInstallmentIndex(record.installment_info);
+        if (!record.installment_info || installmentIndex <= 1) return String(record.date || '');
+
+        const recordDate = new Date(record.date);
+        const period = getRecordPeriodFromDescription(record.description);
+        if (period && recordDate.getMonth() === period.month && recordDate.getFullYear() === period.year) {
+            return String(record.date || '');
+        }
+
+        return getShiftedDate(String(record.date || ''), installmentIndex - 1);
+    };
+
+    const isFutureInstallment = (record: any) => {
+        const today = new Date().toISOString().split('T')[0];
+        return !!record.installment_info && getEffectiveInstallmentDate(record) > today;
+    };
+
+    const signedFinanceAmount = (record: any) => {
+        const amount = Number(record.amount || 0);
+        return record.type === 'income' ? amount : -amount;
+    };
+
+    const isDevirRecord = (record: any) => {
+        const text = `${record.category_name || ''} ${record.description || ''}`
+            .toLocaleLowerCase('tr-TR')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+        return text.includes('devir') || text.includes('devreden');
     };
 
     const navigateTo = (path: string) => {
@@ -160,17 +224,33 @@ const AdminDashboard: React.FC = () => {
 
             // 5. Fetch FINANCE BALANCES (All time)
             const calculateBookBalance = (rows: any[] = []) => {
-                return rows.reduce((acc, curr) => {
-                    const amount = Number(curr.amount || 0);
-                    return curr.type === 'income' ? acc + amount : acc - amount;
-                }, 0);
+                return rows
+                    .filter(row => !isFutureInstallment(row))
+                    .reduce((acc, curr) => acc + signedFinanceAmount(curr), 0);
+            };
+
+            const calculateVakifbankBalance = (rows: any[] = []) => {
+                const currentYear = now.getFullYear();
+                const startOfYear = `${currentYear}-01-01`;
+                const endOfYear = `${currentYear}-12-31`;
+                const settledRows = rows.filter(row => !isFutureInstallment(row));
+                const currentYearRows = settledRows.filter(row => String(row.date || '') >= startOfYear && String(row.date || '') <= endOfYear);
+                const devirRows = currentYearRows
+                    .filter(isDevirRecord)
+                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                const latestDevir = devirRows[devirRows.length - 1];
+                const rowsToCalculate = latestDevir
+                    ? currentYearRows.filter(row => row.id === latestDevir.id || new Date(row.date).getTime() >= new Date(latestDevir.date).getTime())
+                    : currentYearRows;
+
+                return rowsToCalculate.reduce((acc, curr) => acc + signedFinanceAmount(curr), 0);
             };
 
             const [cashBook, denizbankBook, denizbankPosBook, vakifbankBook] = await Promise.all([
-                supabase.from('cash_book').select('amount, type'),
-                supabase.from('denizbank_book').select('amount, type'),
-                supabase.from('denizbank_pos_book').select('amount, type'),
-                supabase.from('vakifbank_book').select('amount, type')
+                supabase.from('cash_book').select('id, date, description, category_name, amount, type, installment_info'),
+                supabase.from('denizbank_book').select('id, date, description, category_name, amount, type, installment_info'),
+                supabase.from('denizbank_pos_book').select('id, date, description, category_name, amount, type, installment_info'),
+                supabase.from('vakifbank_book').select('id, date, description, category_name, amount, type, installment_info')
             ]);
 
             if (cashBook.error) throw cashBook.error;
@@ -181,7 +261,7 @@ const AdminDashboard: React.FC = () => {
             const cash = calculateBookBalance(cashBook.data || []);
             const denizbank = calculateBookBalance(denizbankBook.data || []);
             const denizbankPos = calculateBookBalance(denizbankPosBook.data || []);
-            const vakifbank = calculateBookBalance(vakifbankBook.data || []);
+            const vakifbank = calculateVakifbankBalance(vakifbankBook.data || []);
 
             setFinanceBalances({
                 cash,
@@ -271,10 +351,10 @@ const AdminDashboard: React.FC = () => {
     const formatCurrency = (amount: number) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(amount);
 
     const financeItems = [
-        { label: 'Kasa Defteri', value: financeBalances.cash, icon: Wallet, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/10' },
-        { label: 'Denizbank', value: financeBalances.denizbank, icon: Landmark, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/10' },
-        { label: 'Denizbank POS', value: financeBalances.denizbankPos, icon: CreditCard, color: 'text-cyan-600', bg: 'bg-cyan-50 dark:bg-cyan-900/10' },
-        { label: 'Vakıfbank', value: financeBalances.vakifbank, icon: Landmark, color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-900/10' }
+        { label: 'Kasa Defteri', value: financeBalances.cash, icon: Wallet, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/10', path: '/finance/cashbook' },
+        { label: 'Denizbank', value: financeBalances.denizbank, icon: Landmark, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/10', path: '/finance/denizbank' },
+        { label: 'Denizbank POS', value: financeBalances.denizbankPos, icon: CreditCard, color: 'text-cyan-600', bg: 'bg-cyan-50 dark:bg-cyan-900/10', path: '/finance/denizbank-pos' },
+        { label: 'Vakıfbank', value: financeBalances.vakifbank, icon: Landmark, color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-900/10', path: '/finance/vakifbank' }
     ];
 
     return (
@@ -466,29 +546,38 @@ const AdminDashboard: React.FC = () => {
                                 {financeItems.map(item => {
                                     const Icon = item.icon;
                                     return (
-                                        <div key={item.label} className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/20">
+                                        <button
+                                            key={item.label}
+                                            type="button"
+                                            onClick={() => navigateTo(item.path)}
+                                            className="w-full flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/20 hover:border-pnr-purple/40 hover:bg-white dark:hover:bg-slate-800/50 transition-all text-left group"
+                                        >
                                             <div className="flex items-center gap-2 min-w-0">
                                                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${item.bg}`}>
                                                     <Icon size={16} className={item.color} />
                                                 </div>
                                                 <span className="text-xs font-bold text-slate-600 dark:text-slate-300 truncate">{item.label}</span>
                                             </div>
-                                            <span className={`text-xs font-black font-mono whitespace-nowrap ${item.value >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
+                                            <span className={`text-base md:text-lg font-black font-mono whitespace-nowrap group-hover:scale-105 origin-right transition-transform ${item.value >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
                                                 {formatCurrency(item.value)}
                                             </span>
-                                        </div>
+                                        </button>
                                     );
                                 })}
                             </div>
 
-                            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                            <button
+                                type="button"
+                                onClick={() => navigateTo('/finance/profitability')}
+                                className="w-full mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 rounded-xl px-2 pb-2 transition-colors"
+                            >
                                 <div className="flex items-center gap-2">
                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center ${financeBalances.total >= 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
                                         {financeBalances.total >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
                                     </div>
                                     <div>
                                         <span className="block text-[10px] font-bold text-slate-400 uppercase">Toplam Bakiye</span>
-                                        <span className={`block text-base font-black font-mono ${financeBalances.total >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
+                                        <span className={`block text-xl md:text-2xl font-black font-mono ${financeBalances.total >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
                                             {formatCurrency(financeBalances.total)}
                                         </span>
                                     </div>
@@ -496,7 +585,7 @@ const AdminDashboard: React.FC = () => {
                                 <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${financeBalances.total >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
                                     {financeBalances.total >= 0 ? 'Pozitif' : 'Negatif'}
                                 </span>
-                            </div>
+                            </button>
                         </div>
 
                         {/* 6. GÜNLÜK PROGRAM (Requested 6th) */}

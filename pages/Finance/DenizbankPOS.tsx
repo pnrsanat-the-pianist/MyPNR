@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     ChevronLeft, ChevronRight, Plus, CreditCard, TrendingUp, TrendingDown, Search,
     Save, Upload, CheckSquare, Square, Trash2,
-    FileText, Landmark, RefreshCcw, EyeOff, FileText as FileIcon, X, Download, Clock, Tag
+    FileText, Landmark, RefreshCcw, EyeOff, FileText as FileIcon, X, Download, Clock, Tag, Pencil, Calendar
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import * as XLSX from 'xlsx';
@@ -15,10 +15,12 @@ interface BankRecord {
     id: string;
     date: string;
     type: 'income' | 'expense';
+    category_id?: string;
     category_name: string;
     amount: number;
     description: string;
     installment_info?: string;
+    is_invoiced?: boolean;
 }
 
 interface CategoryDescription {
@@ -55,6 +57,7 @@ interface ImportedRow {
     targetYear: number;
     installments: number;
     installmentInfo?: string;
+    isDuplicate?: boolean;
 }
 
 const MONTH_NAMES = [
@@ -80,6 +83,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     const [isManualModalOpen, setIsManualModalOpen] = useState(false);
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [hideCategorized, setHideCategorized] = useState(false);
+    const [showFutureInstallments, setShowFutureInstallments] = useState(false);
 
     // Upload State
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -98,8 +102,28 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         amount: '',
         targetMonth: new Date().getMonth(),
         targetYear: new Date().getFullYear(),
-        installments: 1
+        installments: 1,
+        bulkPayments: 1,
+        installmentInfo: ''
     });
+    const [editingId, setEditingId] = useState<string | null>(null);
+
+    const resetManualForm = () => {
+        const today = new Date();
+        setFormData({
+            date: today.toISOString().split('T')[0],
+            type: 'income',
+            categoryId: '',
+            subCategoryId: '',
+            amount: '',
+            targetMonth: today.getMonth(),
+            targetYear: today.getFullYear(),
+            installments: 1,
+            bulkPayments: 1,
+            installmentInfo: ''
+        });
+        setEditingId(null);
+    };
 
     // --- Helpers ---
     const formatCurrency = (amount: number) => {
@@ -117,6 +141,52 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     const getYearsList = () => {
         const currentYear = new Date().getFullYear();
         return [currentYear - 1, currentYear, currentYear + 1];
+    };
+
+    const getShiftedDate = (dateStr: string, monthOffset: number) => {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        if (!year || !month || !day) return dateStr;
+
+        const targetMonthIndex = month - 1 + monthOffset;
+        const targetYear = year + Math.floor(targetMonthIndex / 12);
+        const normalizedMonth = ((targetMonthIndex % 12) + 12) % 12;
+        const daysInMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
+        const finalDay = Math.min(day, daysInMonth);
+
+        return new Date(Date.UTC(targetYear, normalizedMonth, finalDay)).toISOString().split('T')[0];
+    };
+
+    const getInstallmentIndex = (installmentInfo?: string) => {
+        const match = String(installmentInfo || '').match(/^(\d+)\s*\//);
+        return match ? Math.max(1, parseInt(match[1], 10) || 1) : 1;
+    };
+
+    const getRecordPeriodFromDescription = (description?: string) => {
+        const parts = description ? description.split(' - ').map(part => part.trim()).filter(Boolean) : [];
+        const period = parts[parts.length - 1] || '';
+        const [monthText, yearText] = period.split(/\s+/);
+        const monthIndex = MONTH_NAMES.findIndex(month => month.toLocaleLowerCase('tr-TR') === (monthText || '').toLocaleLowerCase('tr-TR'));
+        const yearValue = parseInt(yearText || '', 10);
+
+        return monthIndex !== -1 && !isNaN(yearValue) ? { month: monthIndex, year: yearValue } : null;
+    };
+
+    const getEffectiveInstallmentDate = (record: BankRecord) => {
+        const installmentIndex = getInstallmentIndex(record.installment_info);
+        if (!record.installment_info || installmentIndex <= 1) return record.date;
+
+        const recordDate = new Date(record.date);
+        const period = getRecordPeriodFromDescription(record.description);
+        if (period && recordDate.getMonth() === period.month && recordDate.getFullYear() === period.year) {
+            return record.date;
+        }
+
+        return getShiftedDate(record.date, installmentIndex - 1);
+    };
+
+    const isFutureInstallment = (record: BankRecord) => {
+        const today = new Date().toISOString().split('T')[0];
+        return !!record.installment_info && getEffectiveInstallmentDate(record) > today;
     };
 
     const handleCategoryChange = (catId: string) => {
@@ -161,11 +231,12 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             let calculatedOpening = 0;
             const { data: allPrevRecords } = await supabase
                 .from('denizbank_pos_book')
-                .select('amount, type')
+                .select('amount, type, date, installment_info')
                 .lt('date', startOfYear);
 
             if (allPrevRecords) {
                 calculatedOpening = allPrevRecords.reduce((acc, curr) => {
+                    if (curr.installment_info && curr.date > new Date().toISOString().split('T')[0]) return acc;
                     return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
                 }, 0);
             }
@@ -250,6 +321,54 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         if (isNaN(num)) return 0;
 
         return isNegative ? -num : num;
+    };
+
+    const normalizeDuplicateText = (value: string) => value.toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+
+    const getExpectedImportDate = (row: Pick<ImportedRow, 'date' | 'targetMonth' | 'targetYear'>) => {
+        const transDay = new Date(row.date).getDate();
+        const daysInMonth = new Date(row.targetYear, row.targetMonth + 1, 0).getDate();
+        const finalDay = Math.min(transDay, daysInMonth);
+        return new Date(Date.UTC(row.targetYear, row.targetMonth, finalDay)).toISOString().split('T')[0];
+    };
+
+    const isDuplicateImportRow = (row: ImportedRow, record: BankRecord) => {
+        const rowDescription = normalizeDuplicateText(row.description);
+        const recordDescription = normalizeDuplicateText(record.description || '');
+        const descriptionsMatch = recordDescription === rowDescription
+            || recordDescription.startsWith(`${rowDescription} - `)
+            || rowDescription.startsWith(`${recordDescription} - `);
+
+        return String(record.date).split('T')[0] === getExpectedImportDate(row)
+            && record.type === row.type
+            && Math.abs(Number(record.amount) - row.amount) < 0.01
+            && descriptionsMatch;
+    };
+
+    const markDuplicateImportRows = async (rows: ImportedRow[]) => {
+        const expectedDates = rows.map(getExpectedImportDate).sort();
+        if (expectedDates.length === 0) return rows;
+
+        const { data, error } = await supabase
+            .from('denizbank_pos_book')
+            .select('id, date, type, amount, description, category_name')
+            .gte('date', expectedDates[0])
+            .lte('date', expectedDates[expectedDates.length - 1]);
+
+        if (error) throw error;
+
+        const existingRecords = (data || []) as BankRecord[];
+        const rowsWithDuplicateStatus = rows.map(row => {
+            const isDuplicate = existingRecords.some(record => isDuplicateImportRow(row, record));
+            return { ...row, isDuplicate, isSelected: isDuplicate ? false : row.isSelected };
+        });
+        const duplicateCount = rowsWithDuplicateStatus.filter(row => row.isDuplicate).length;
+
+        if (duplicateCount > 0) {
+            alert(`${duplicateCount} satır daha önce kaydedilmiş görünüyor. Bu satırlar seçili gelmedi ve aktarılmayacak.`);
+        }
+
+        return rowsWithDuplicateStatus;
     };
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -448,7 +567,8 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                     });
 
                     if (parsedRows.length > 0) {
-                        setImportedRows(parsedRows);
+                        const checkedRows = await markDuplicateImportRows(parsedRows);
+                        setImportedRows(checkedRows);
                         setIsUploadModalOpen(true);
                     } else {
                         alert("Dosyadan anlamlı veri okunamadı.");
@@ -487,12 +607,12 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     };
 
     const toggleImportRowSelection = (id: string) => {
-        setImportedRows(prev => prev.map(r => r.id === id ? { ...r, isSelected: !r.isSelected } : r));
+        setImportedRows(prev => prev.map(r => r.id === id && !r.isDuplicate ? { ...r, isSelected: !r.isSelected } : r));
     };
 
     const confirmImport = async () => {
         if (!canEdit) return;
-        const selectedRows = importedRows.filter(r => r.isSelected);
+        const selectedRows = importedRows.filter(r => r.isSelected && !r.isDuplicate);
         if (selectedRows.length === 0) return;
 
         const invalidRows = selectedRows.filter(r => {
@@ -518,7 +638,6 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                 const subCategory = category?.descriptions.find(d => d.id === row.subCategoryId);
                 const catName = category?.title || 'Diğer';
 
-                const transDay = new Date(row.date).getDate();
                 const totalAmount = row.amount;
                 const installments = Math.max(1, row.installments);
 
@@ -531,12 +650,6 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
                     targetY += Math.floor(targetM / 12);
                     targetM = targetM % 12;
-
-                    const daysInMonth = new Date(targetY, targetM + 1, 0).getDate();
-                    const finalDay = Math.min(transDay, daysInMonth);
-
-                    const recordDate = new Date(Date.UTC(targetY, targetM, finalDay));
-                    const isoDate = recordDate.toISOString().split('T')[0];
 
                     const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
 
@@ -554,7 +667,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                     }
 
                     dbRows.push({
-                        date: isoDate,
+                        date: getShiftedDate(row.date, i),
                         description: finalDesc,
                         amount: Number(installmentAmount.toFixed(2)),
                         type: row.type,
@@ -595,54 +708,63 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                 return;
             }
 
-            const dbRows: any[] = [];
-            const transDay = new Date(formData.date).getDate();
             const totalAmount = Math.abs(parseTurkishAmount(formData.amount));
             const installments = Math.max(1, formData.installments);
-            const baseAmount = Math.floor((totalAmount / installments) * 100) / 100;
-            const remainder = Number((totalAmount - (baseAmount * installments)).toFixed(2));
+            const bulkPayments = Math.max(1, formData.bulkPayments);
+            const splitCount = bulkPayments > 1 ? bulkPayments : installments;
+            const isBulkPayment = bulkPayments > 1;
+            const baseAmount = Math.floor((totalAmount / splitCount) * 100) / 100;
+            const remainder = Number((totalAmount - (baseAmount * splitCount)).toFixed(2));
 
-            for (let i = 0; i < installments; i++) {
-                let targetY = formData.targetYear;
-                let targetM = formData.targetMonth + i;
+            const buildSplitRows = () => {
+                const splitRows: any[] = [];
 
-                targetY += Math.floor(targetM / 12);
-                targetM = targetM % 12;
+                for (let i = 0; i < splitCount; i++) {
+                    let targetY = formData.targetYear;
+                    let targetM = formData.targetMonth + i;
 
-                const daysInMonth = new Date(targetY, targetM + 1, 0).getDate();
-                const finalDay = Math.min(transDay, daysInMonth);
-                const recordDate = new Date(Date.UTC(targetY, targetM, finalDay));
-                const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
-                const description = `${subCategory?.description || 'Genel'} - ${periodString}`;
-                const amount = i === installments - 1 ? baseAmount + remainder : baseAmount;
+                    targetY += Math.floor(targetM / 12);
+                    targetM = targetM % 12;
 
-                dbRows.push({
-                    date: recordDate.toISOString().split('T')[0],
-                    type: formData.type,
-                    category_id: formData.categoryId,
-                    category_name: cat?.title || '',
-                    amount: Number(amount.toFixed(2)),
-                    description,
-                    installment_info: installments > 1 ? `${i + 1}/${installments}` : null
-                });
+                    const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
+                    const description = `${subCategory?.description || 'Genel'} - ${periodString}`;
+                    const amount = i === splitCount - 1 ? baseAmount + remainder : baseAmount;
+
+                    splitRows.push({
+                        date: isBulkPayment ? formData.date : getShiftedDate(formData.date, i),
+                        type: formData.type,
+                        category_id: formData.categoryId,
+                        category_name: cat?.title || '',
+                        amount: Number(amount.toFixed(2)),
+                        description,
+                        installment_info: !isBulkPayment && splitCount > 1 ? `${i + 1}/${splitCount}` : null
+                    });
+                }
+
+                return splitRows;
+            };
+
+            if (editingId) {
+                const [firstRow, ...extraRows] = buildSplitRows();
+                const { error: updateError } = await supabase
+                    .from('denizbank_pos_book')
+                    .update(firstRow)
+                    .eq('id', editingId);
+
+                if (updateError) throw updateError;
+
+                if (extraRows.length > 0) {
+                    const { error: insertError } = await supabase.from('denizbank_pos_book').insert(extraRows);
+                    if (insertError) throw insertError;
+                }
+            } else {
+                const { error } = await supabase.from('denizbank_pos_book').insert(buildSplitRows());
+
+                if (error) throw error;
             }
 
-            const { error } = await supabase.from('denizbank_pos_book').insert(dbRows);
-
-            if (error) throw error;
-
             setIsManualModalOpen(false);
-            const today = new Date();
-            setFormData({
-                date: today.toISOString().split('T')[0],
-                type: 'income',
-                categoryId: '',
-                subCategoryId: '',
-                amount: '',
-                targetMonth: today.getMonth(),
-                targetYear: today.getFullYear(),
-                installments: 1
-            });
+            resetManualForm();
             fetchData();
 
         } catch (err: any) {
@@ -705,37 +827,120 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     };
 
     // Stats
-    const totalIncome = records.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
-    const totalExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
+    const futureInstallmentRecords = records.filter(isFutureInstallment);
+    const settledRecords = records.filter(record => !isFutureInstallment(record));
+    const futureInstallmentTotal = futureInstallmentRecords.reduce((acc, record) => acc + (record.type === 'income' ? record.amount : -record.amount), 0);
+    const totalIncome = settledRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
+    const totalExpense = settledRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
     const balance = openingBalance + totalIncome - totalExpense;
 
-    const filteredRecords = records.filter(r =>
+    const filteredRecords = settledRecords.filter(r =>
         r.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
         r.category_name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const selectedCategory = categories.find(c => c.id === formData.categoryId);
 
-    let runningBalance = openingBalance;
-    const balanceByRecordId = new Map<string, number>();
-    [...filteredRecords]
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-        .forEach(record => {
-            runningBalance += record.type === 'income' ? record.amount : -record.amount;
-            balanceByRecordId.set(record.id, runningBalance);
+    const getDescriptionParts = (description: string) => description
+        ? description.split(' - ').map(part => part.trim()).filter(Boolean)
+        : [];
+
+    const getRecordCategory = (record: BankRecord) => categories.find(c => record.category_id && c.id === record.category_id)
+        || categories.find(c => normalizeDottedIForCompare(c.title) === normalizeDottedIForCompare(record.category_name));
+
+    const getRecordSubCategoryDisplay = (record: BankRecord) => {
+        const descriptionParts = getDescriptionParts(record.description);
+        const category = getRecordCategory(record);
+        const subCategory = category?.descriptions.find(desc =>
+            descriptionParts.some(part => normalizeDottedIForCompare(part) === normalizeDottedIForCompare(desc.description))
+        );
+
+        return subCategory?.description || descriptionParts[0] || '';
+    };
+
+    const getRecordTargetPeriod = (record: BankRecord) => {
+        const descriptionParts = getDescriptionParts(record.description);
+        const periodText = descriptionParts[descriptionParts.length - 1] || '';
+        const periodParts = periodText.split(/\s+/);
+        const monthIndex = MONTH_NAMES.findIndex(m => m.toLocaleLowerCase('tr-TR') === (periodParts[0] || '').toLocaleLowerCase('tr-TR'));
+        const yearValue = parseInt(periodParts[1]);
+
+        if (monthIndex !== -1 && !isNaN(yearValue)) {
+            return { targetMonth: monthIndex, targetYear: yearValue };
+        }
+
+        const recordDate = new Date(record.date);
+        return {
+            targetMonth: isNaN(recordDate.getTime()) ? new Date().getMonth() : recordDate.getMonth(),
+            targetYear: isNaN(recordDate.getTime()) ? new Date().getFullYear() : recordDate.getFullYear()
+        };
+    };
+
+    const isInvoiceEligible = (record: BankRecord) =>
+        record.type === 'income'
+        && normalizeDottedIForCompare(record.category_name).toLocaleLowerCase('tr-TR') !== normalizeDottedIForCompare('Hesaplar Arası').toLocaleLowerCase('tr-TR')
+        && normalizeDottedIForCompare(getRecordSubCategoryDisplay(record)).toLocaleLowerCase('tr-TR') !== normalizeDottedIForCompare('Hesaplar Arası').toLocaleLowerCase('tr-TR');
+
+    const handleInvoiceToggle = async (record: BankRecord, isInvoiced: boolean) => {
+        if (!canEdit || !isInvoiceEligible(record)) return;
+
+        setRecords(prev => prev.map(item => item.id === record.id ? { ...item, is_invoiced: isInvoiced } : item));
+
+        const { error } = await supabase
+            .from('denizbank_pos_book')
+            .update({ is_invoiced: isInvoiced })
+            .eq('id', record.id);
+
+        if (error) {
+            setRecords(prev => prev.map(item => item.id === record.id ? { ...item, is_invoiced: record.is_invoiced } : item));
+            alert('Fatura durumu güncellenemedi: ' + error.message);
+        }
+    };
+
+    const handleEdit = (record: BankRecord) => {
+        if (!canEdit) return;
+        const category = getRecordCategory(record);
+        const subCategoryDisplay = getRecordSubCategoryDisplay(record);
+        const subCategory = category?.descriptions.find(desc => normalizeDottedIForCompare(desc.description) === normalizeDottedIForCompare(subCategoryDisplay));
+        const { targetMonth, targetYear } = getRecordTargetPeriod(record);
+
+        setFormData({
+            date: record.date,
+            type: record.type,
+            categoryId: record.category_id || category?.id || '',
+            subCategoryId: subCategory?.id || '',
+            amount: record.amount.toString(),
+            targetMonth,
+            targetYear,
+            installments: 1,
+            bulkPayments: 1,
+            installmentInfo: record.installment_info || ''
         });
+        setEditingId(record.id);
+        setIsManualModalOpen(true);
+    };
 
     const displayedRecords = [...filteredRecords]
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+    let runningBalance = openingBalance;
+    const balanceByRecordId = new Map<string, number>();
+    for (let i = displayedRecords.length - 1; i >= 0; i--) {
+        const record = displayedRecords[i];
+        runningBalance += record.type === 'income' ? record.amount : -record.amount;
+        balanceByRecordId.set(record.id, runningBalance);
+    }
+
     const handleDownloadExcel = () => {
-        const exportRows = filteredRecords.map(record => {
-            const descriptionParts = record.description ? record.description.split(' - ') : [];
-            const subCategoryDisplay = descriptionParts[0] || '';
+        const exportRows = displayedRecords.map(record => {
+            const descriptionParts = getDescriptionParts(record.description);
+            const subCategoryDisplay = getRecordSubCategoryDisplay(record);
             const periodDisplay = descriptionParts.length > 1 ? descriptionParts.slice(-1)[0] : '';
 
             return {
+                Fatura: isInvoiceEligible(record) ? (record.is_invoiced ? 'Evet' : 'Hayır') : '',
                 Tarih: record.date,
+                Açıklama: record.description || '',
                 Kategori: record.category_name,
                 'Alt Kategori': subCategoryDisplay,
                 Dönem: periodDisplay,
@@ -826,7 +1031,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
                     {canEdit && (
                         <button
-                            onClick={() => setIsManualModalOpen(true)}
+                            onClick={() => { resetManualForm(); setIsManualModalOpen(true); }}
                             className="bg-pnr-purple hover:bg-pnr-indigo text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-pnr-purple/20 flex items-center gap-2 transition-transform active:scale-95"
                         >
                             <Plus size={20} /> Yeni Kayıt
@@ -836,7 +1041,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             </div>
 
             {/* Summary Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-5 rounded-2xl flex flex-col shadow-sm">
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">POS Bakiyesi</span>
                     <div className={`text-3xl font-bold font-mono ${balance >= 0 ? 'text-slate-900 dark:text-white' : 'text-red-500'}`}>
@@ -857,6 +1062,17 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                     </div>
                     <div className="text-2xl font-bold font-mono text-red-700 dark:text-red-400">{formatCurrency(totalExpense)}</div>
                 </div>
+                <button
+                    type="button"
+                    onClick={() => setShowFutureInstallments(prev => !prev)}
+                    className={`text-left border p-5 rounded-2xl flex flex-col transition-colors ${showFutureInstallments ? 'bg-amber-100 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700' : 'bg-amber-50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/20'}`}
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <Calendar size={16} className="text-amber-600" />
+                        <span className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Gelecek Taksit</span>
+                    </div>
+                    <div className="text-2xl font-bold font-mono text-amber-700 dark:text-amber-400">{formatCurrency(futureInstallmentTotal)}</div>
+                </button>
             </div>
 
             {/* Filter Bar */}
@@ -871,6 +1087,63 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                 />
             </div>
 
+            {showFutureInstallments && (
+                <div className="bg-white dark:bg-pnr-card border border-amber-200 dark:border-amber-800 rounded-2xl shadow-sm overflow-hidden">
+                    <div className="p-4 bg-amber-50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-800 flex justify-between items-center gap-3">
+                        <h3 className="font-bold text-amber-800 dark:text-amber-300">Gelecek Taksitler</h3>
+                        <div className="flex items-center gap-3">
+                            {canEdit && futureInstallmentRecords.some(record => selectedIds.has(record.id)) && (
+                                <button
+                                    type="button"
+                                    onClick={handleBulkDelete}
+                                    className="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm"
+                                >
+                                    Seçilenleri Sil ({futureInstallmentRecords.filter(record => selectedIds.has(record.id)).length})
+                                </button>
+                            )}
+                            <span className="font-mono font-bold text-amber-700 dark:text-amber-400">{formatCurrency(futureInstallmentTotal)}</span>
+                        </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs sm:text-sm">
+                            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase">
+                                <tr>
+                                    <th className="p-3 w-10"></th>
+                                    <th className="p-3">Tarih</th>
+                                    <th className="p-3">Açıklama</th>
+                                    <th className="p-3">Kategori</th>
+                                    <th className="p-3 text-center">Taksit</th>
+                                    <th className="p-3 text-right">Tutar</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {futureInstallmentRecords.length === 0 ? (
+                                    <tr><td colSpan={6} className="p-6 text-center text-slate-400">Gelecek taksit bulunmuyor.</td></tr>
+                                ) : [...futureInstallmentRecords].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(record => (
+                                    <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                                        <td className="p-3 text-center">
+                                            {canEdit && (
+                                                <input
+                                                    type="checkbox"
+                                                    className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
+                                                    checked={selectedIds.has(record.id)}
+                                                    onChange={() => toggleSelectRecord(record.id)}
+                                                />
+                                            )}
+                                        </td>
+                                        <td className="p-3 font-mono text-slate-600 dark:text-slate-300">{formatDate(getEffectiveInstallmentDate(record))}</td>
+                                        <td className="p-3 text-slate-700 dark:text-slate-300">{record.description}</td>
+                                        <td className="p-3 text-slate-700 dark:text-slate-300">{record.category_name}</td>
+                                        <td className="p-3 text-center font-mono text-slate-500">{record.installment_info}</td>
+                                        <td className={`p-3 text-right font-bold ${record.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{record.type === 'income' ? '+' : '-'}{formatCurrency(record.amount)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
             {/* Main Table */}
             <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
                 {loading ? (
@@ -880,14 +1153,16 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                         <table className="w-full text-left border-collapse table-fixed text-xs sm:text-sm">
                             <colgroup>
                                 <col className="w-8 sm:w-12" />
-                                <col className="w-[18%] sm:w-[13%]" />
-                                <col className="w-[21%] sm:w-[15%]" />
-                                <col className="w-[22%] sm:w-[19%]" />
-                                <col className="hidden md:table-column md:w-[12%]" />
-                                <col className="hidden lg:table-column lg:w-[8%]" />
-                                <col className="w-[21%] sm:w-[13%]" />
-                                <col className="hidden md:table-column md:w-[13%]" />
-                                <col className="w-[10%] sm:w-[7%]" />
+                                <col className="w-[17%] sm:w-[11%]" />
+                                <col className="hidden md:table-column md:w-[15%]" />
+                                <col className="w-[20%] sm:w-[13%]" />
+                                <col className="w-[20%] sm:w-[15%]" />
+                                <col className="hidden md:table-column md:w-[10%]" />
+                                <col className="hidden lg:table-column lg:w-[7%]" />
+                                <col className="w-[19%] sm:w-[12%]" />
+                                <col className="hidden md:table-column md:w-[10%]" />
+                                <col className="w-10 sm:w-12" />
+                                <col className="w-[10%] sm:w-[6%]" />
                             </colgroup>
                             <thead>
                                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-500 uppercase">
@@ -900,29 +1175,32 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                         />
                                     </th>
                                     <th className="p-2 sm:p-4 text-[10px] sm:text-xs">Tarih</th>
+                                    <th className="hidden md:table-cell p-2 sm:p-4">Açıklama</th>
                                     <th className="p-2 sm:p-4 text-[10px] sm:text-xs">Kategori</th>
                                     <th className="p-2 sm:p-4 text-[10px] sm:text-xs">Alt Kategori</th>
                                     <th className="hidden md:table-cell p-2 sm:p-4">Dönem</th>
                                     <th className="hidden lg:table-cell p-2 sm:p-4 text-center">Taksit</th>
                                     <th className="p-2 sm:p-4 text-[10px] sm:text-xs text-right">Tutar</th>
                                     <th className="hidden md:table-cell p-2 sm:p-4 text-right">Bakiye</th>
+                                    <th className="p-2 sm:p-4 text-[10px] sm:text-xs text-center">Fatura</th>
                                     <th className="p-2 sm:p-4 text-[10px] sm:text-xs text-center">İşlem</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                 <tr className="bg-slate-50/50 dark:bg-slate-900/30 italic text-slate-500">
                                     <td className="p-2 sm:p-4"></td>
-                                    <td className="p-2 sm:p-4 text-xs" colSpan={4}>Devreden Bakiye</td>
+                                    <td className="p-2 sm:p-4 text-xs" colSpan={6}>Devreden Bakiye</td>
                                     <td className="p-2 sm:p-4 text-xs sm:text-sm font-mono font-bold text-right">{formatCurrency(openingBalance)}</td>
                                     <td className="hidden md:table-cell p-2 sm:p-4"></td>
+                                    <td className="p-2 sm:p-4"></td>
                                     <td className="p-2 sm:p-4"></td>
                                 </tr>
 
                                 {filteredRecords.length > 0 ? (
                                     displayedRecords.map((record, index) => {
                                         const isIncome = record.type === 'income';
-                                        const descriptionParts = record.description ? record.description.split(' - ') : [];
-                                        const subCategoryDisplay = descriptionParts[0] || '-';
+                                        const descriptionParts = getDescriptionParts(record.description);
+                                        const subCategoryDisplay = getRecordSubCategoryDisplay(record) || '-';
                                         const periodDisplay = descriptionParts.length > 1 ? descriptionParts.slice(-1)[0] : '-';
                                         const rowBalance = balanceByRecordId.get(record.id) ?? 0;
                                         const currentDateObj = new Date(record.date);
@@ -944,6 +1222,9 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                                     </td>
                                                     <td className="p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-300 font-mono break-words">
                                                         {formatDate(record.date)}
+                                                    </td>
+                                                    <td className="hidden md:table-cell p-2 sm:p-4 text-xs sm:text-sm text-slate-700 dark:text-slate-300 break-words">
+                                                        {record.description || '-'}
                                                     </td>
                                                     <td className="p-2 sm:p-4">
                                                         <span className={`inline-block max-w-full break-words text-[10px] sm:text-xs px-1.5 sm:px-2 py-1 rounded border ${isIncome
@@ -969,14 +1250,35 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                                         {formatCurrency(rowBalance)}
                                                     </td>
                                                     <td className="p-2 sm:p-4 text-center">
+                                                        {isInvoiceEligible(record) ? (
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={!!record.is_invoiced}
+                                                                onChange={(e) => handleInvoiceToggle(record, e.target.checked)}
+                                                                disabled={!canEdit}
+                                                                className="h-4 w-4 appearance-none rounded border-2 border-red-600 bg-red-100 transition-colors checked:border-green-600 checked:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                title={record.is_invoiced ? 'Fatura işaretli' : 'Fatura işaretli değil'}
+                                                            />
+                                                        ) : null}
+                                                    </td>
+                                                    <td className="p-2 sm:p-4 text-center">
                                                         {canEdit && (
-                                                            <button
-                                                                onClick={() => handleDelete(record.id)}
-                                                                className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-all"
-                                                                title="Kaydı Sil"
-                                                            >
-                                                                <Trash2 size={18} />
-                                                            </button>
+                                                            <div className="flex items-center justify-center gap-1">
+                                                                <button
+                                                                    onClick={() => handleEdit(record)}
+                                                                    className="p-2 text-slate-400 hover:text-pnr-purple dark:hover:text-pnr-purple hover:bg-pnr-purple/10 rounded-lg transition-all"
+                                                                    title="Kaydı Düzenle"
+                                                                >
+                                                                    <Pencil size={18} />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDelete(record.id)}
+                                                                    className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-all"
+                                                                    title="Kaydı Sil"
+                                                                >
+                                                                    <Trash2 size={18} />
+                                                                </button>
+                                                            </div>
                                                         )}
                                                     </td>
                                                 </tr>
@@ -985,7 +1287,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                     })
                                 ) : (
                                     <tr>
-                                        <td colSpan={9} className="p-8 text-center text-slate-400 text-sm">
+                                        <td colSpan={11} className="p-8 text-center text-slate-400 text-sm">
                                             Kayıt bulunamadı.
                                         </td>
                                     </tr>
@@ -1068,14 +1370,16 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                         <th className="p-3 w-10 text-center">
                                             <button
                                                 onClick={() => {
-                                                    const allSelected = importedRows.every(r => r.isSelected);
-                                                    setImportedRows(importedRows.map(r => ({ ...r, isSelected: !allSelected })));
+                                                    const selectableRows = importedRows.filter(r => !r.isDuplicate);
+                                                    const allSelected = selectableRows.length > 0 && selectableRows.every(r => r.isSelected);
+                                                    setImportedRows(importedRows.map(r => r.isDuplicate ? { ...r, isSelected: false } : { ...r, isSelected: !allSelected }));
                                                 }}
                                             >
-                                                {importedRows.every(r => r.isSelected) ? <CheckSquare size={16} /> : <Square size={16} />}
+                                                {importedRows.filter(r => !r.isDuplicate).length > 0 && importedRows.filter(r => !r.isDuplicate).every(r => r.isSelected) ? <CheckSquare size={16} /> : <Square size={16} />}
                                             </button>
                                         </th>
                                         <th className="p-3 w-28">Tarih</th>
+                                        <th className="p-3 w-64">Açıklama</th>
                                         <th className="p-3 w-24 text-right">Tutar</th>
                                         <th className="p-3 w-24 text-center">Tür</th>
                                         <th className="p-3 w-40">Kategori</th>
@@ -1095,13 +1399,26 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                             const isSubCategoryMissing = hasSubOptions && !row.subCategoryId;
 
                                             return (
-                                                <tr key={row.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 ${!row.isSelected ? 'opacity-50 grayscale' : ''}`}>
+                                                <tr key={row.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 ${row.isDuplicate ? 'bg-amber-50 dark:bg-amber-900/10' : ''} ${!row.isSelected ? 'opacity-50 grayscale' : ''}`}>
                                                     <td className="p-3 text-center align-middle">
-                                                        <button onClick={() => toggleImportRowSelection(row.id)} className="text-pnr-purple">
+                                                        <button onClick={() => toggleImportRowSelection(row.id)} className="text-pnr-purple disabled:cursor-not-allowed disabled:text-amber-500" disabled={row.isDuplicate} title={row.isDuplicate ? 'Daha önce kaydedilmiş' : undefined}>
                                                             {row.isSelected ? <CheckSquare size={16} /> : <Square size={16} className="text-slate-300" />}
                                                         </button>
                                                     </td>
                                                     <td className="p-3 font-mono text-slate-600 dark:text-slate-300 align-middle">{row.date}</td>
+                                                    <td className="p-2 align-middle">
+                                                        <input
+                                                            type="text"
+                                                            className="w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-1.5 text-slate-700 dark:text-slate-200"
+                                                            value={row.description}
+                                                            onChange={(e) => updateImportRow(row.id, 'description', e.target.value)}
+                                                        />
+                                                        {row.isDuplicate && (
+                                                            <div className="mt-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                                                                Daha önce kaydedilmiş, seçili değil.
+                                                            </div>
+                                                        )}
+                                                    </td>
                                                     <td className={`p-3 font-bold text-right align-middle ${row.type === 'expense' ? 'text-red-600' : 'text-green-600'}`}>
                                                         {row.type === 'expense' ? '-' : '+'}{formatCurrency(row.amount)}
                                                     </td>
@@ -1204,9 +1521,9 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                     <div className="bg-white dark:bg-pnr-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
                         <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
                             <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-                                <CreditCard size={20} className="text-pnr-purple" /> Yeni Denizbank POS Kaydı
+                                <CreditCard size={20} className="text-pnr-purple" /> {editingId ? 'Denizbank POS Kaydını Düzenle' : 'Yeni Denizbank POS Kaydı'}
                             </h3>
-                            <button onClick={() => setIsManualModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-900" /></button>
+                            <button onClick={() => { setIsManualModalOpen(false); resetManualForm(); }}><X size={20} className="text-slate-400 hover:text-slate-900" /></button>
                         </div>
                         <form onSubmit={handleManualSave} className="p-6 space-y-4">
                             <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
@@ -1302,7 +1619,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                 </div>
                             )}
 
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-3 gap-4">
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Taksit Sayısı</label>
                                     <div className="relative">
@@ -1311,11 +1628,33 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                             min="1"
                                             className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
                                             value={formData.installments || ''}
-                                            onChange={(e) => setFormData({ ...formData, installments: parseInt(e.target.value) || 0 })}
+                                            onChange={(e) => {
+                                                const value = parseInt(e.target.value) || 0;
+                                                setFormData({ ...formData, installments: value, bulkPayments: value > 1 ? 1 : formData.bulkPayments, installmentInfo: '' });
+                                            }}
                                             placeholder="1"
                                         />
                                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">
-                                            {(!formData.installments || formData.installments <= 1) ? 'Tek Çekim' : 'Adet'}
+                                            {(!formData.installments || formData.installments <= 1) ? 'Tek' : 'Adet'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Toplu Ödeme</label>
+                                    <div className="relative">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                                            value={formData.bulkPayments || ''}
+                                            onChange={(e) => {
+                                                const value = parseInt(e.target.value) || 0;
+                                                setFormData({ ...formData, bulkPayments: value, installments: value > 1 ? 1 : formData.installments, installmentInfo: '' });
+                                            }}
+                                            placeholder="1"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">
+                                            {(!formData.bulkPayments || formData.bulkPayments <= 1) ? 'Yok' : 'Ay'}
                                         </span>
                                     </div>
                                 </div>
@@ -1334,9 +1673,9 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                 </div>
                             </div>
 
-                            {formData.installments > 1 && formData.amount && (
+                            {(formData.installments > 1 || formData.bulkPayments > 1) && formData.amount && (
                                 <p className="text-xs text-slate-400 text-right font-mono">
-                                    Aylık Ödeme: {formatCurrency(parseTurkishAmount(formData.amount) / formData.installments)}
+                                    {formData.bulkPayments > 1 ? 'Dönem Payı' : 'Aylık Ödeme'}: {formatCurrency(parseTurkishAmount(formData.amount) / (formData.bulkPayments > 1 ? formData.bulkPayments : formData.installments))}
                                 </p>
                             )}
 
@@ -1345,7 +1684,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                 disabled={loading}
                                 className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95 disabled:opacity-70 ${formData.type === 'income' ? 'bg-green-600 hover:bg-green-700 shadow-green-500/20' : 'bg-red-600 hover:bg-red-700 shadow-red-500/20'}`}
                             >
-                                {loading ? 'Kaydediliyor...' : 'Kaydet'}
+                                {loading ? 'Kaydediliyor...' : editingId ? 'Güncelle' : 'Kaydet'}
                             </button>
                         </form>
                     </div>

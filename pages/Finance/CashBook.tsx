@@ -70,6 +70,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [hideCategorized, setHideCategorized] = useState(false);
     const [highlightedInstallment, setHighlightedInstallment] = useState<string | null>(null);
+    const [showFutureInstallments, setShowFutureInstallments] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [searchTerm, setSearchTerm] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -86,7 +87,8 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         amount: '',
         targetMonth: new Date().getMonth(), // 0-11
         targetYear: new Date().getFullYear(),
-        installments: 1
+        installments: 1,
+        bulkPayments: 1
     });
     const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -172,6 +174,51 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         return isNegative ? -parsed : parsed;
     };
 
+    const getShiftedDate = (dateStr: string, monthOffset: number) => {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        if (!year || !month || !day) return dateStr;
+
+        const targetMonthIndex = month - 1 + monthOffset;
+        const targetYear = year + Math.floor(targetMonthIndex / 12);
+        const normalizedMonth = ((targetMonthIndex % 12) + 12) % 12;
+        const daysInMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
+        const finalDay = Math.min(day, daysInMonth);
+
+        return new Date(Date.UTC(targetYear, normalizedMonth, finalDay)).toISOString().split('T')[0];
+    };
+
+    const getInstallmentIndex = (installmentInfo?: string) => {
+        const match = String(installmentInfo || '').match(/^(\d+)\s*\//);
+        return match ? Math.max(1, parseInt(match[1], 10) || 1) : 1;
+    };
+
+    const getRecordPeriod = (record: CashRecord) => {
+        const { period } = parseDescriptionParts(record.description);
+        const [monthText, yearText] = period.split(/\s+/);
+        const monthIndex = MONTH_NAMES.findIndex(month => month.toLocaleLowerCase('tr-TR') === (monthText || '').toLocaleLowerCase('tr-TR'));
+        const yearValue = parseInt(yearText || '', 10);
+
+        return monthIndex !== -1 && !isNaN(yearValue) ? { month: monthIndex, year: yearValue } : null;
+    };
+
+    const getEffectiveInstallmentDate = (record: CashRecord) => {
+        const installmentIndex = getInstallmentIndex(record.installment_info);
+        if (!record.installment_info || installmentIndex <= 1) return record.date;
+
+        const recordDate = new Date(record.date);
+        const period = getRecordPeriod(record);
+        if (period && recordDate.getMonth() === period.month && recordDate.getFullYear() === period.year) {
+            return record.date;
+        }
+
+        return getShiftedDate(record.date, installmentIndex - 1);
+    };
+
+    const isFutureInstallment = (record: CashRecord) => {
+        const today = new Date().toISOString().split('T')[0];
+        return !!record.installment_info && getEffectiveInstallmentDate(record) > today;
+    };
+
     const normalizeExcelDate = (val: any): string => {
         if (!val) return '';
         if (val instanceof Date) return val.toISOString().split('T')[0];
@@ -230,11 +277,12 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
             let calculatedOpening = 0;
             const { data: allPrevRecords } = await supabase
                 .from('cash_book')
-                .select('amount, type')
+                .select('amount, type, date, installment_info')
                 .lt('date', startOfYear);
 
             if (allPrevRecords) {
                 calculatedOpening = allPrevRecords.reduce((acc, curr) => {
+                    if (curr.installment_info && curr.date > new Date().toISOString().split('T')[0]) return acc;
                     return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
                 }, 0);
             }
@@ -316,7 +364,8 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
             amount: record.amount.toString(),
             targetMonth: new Date(record.date).getMonth(),
             targetYear: new Date(record.date).getFullYear(),
-            installments: 1 // Installment splitting is only for new records
+            installments: 1,
+            bulkPayments: 1
         });
         setEditingId(record.id);
         setIsModalOpen(true);
@@ -337,61 +386,52 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
 
             const totalAmount = parseFloat(formData.amount);
             const installments = Math.max(1, formData.installments);
-            const monthlyAmount = totalAmount / installments;
+            const bulkPayments = Math.max(1, formData.bulkPayments);
+            const splitCount = bulkPayments > 1 ? bulkPayments : installments;
+            const isBulkPayment = bulkPayments > 1;
+            const baseAmount = Math.floor((totalAmount / splitCount) * 100) / 100;
+            const remainder = Number((totalAmount - (baseAmount * splitCount)).toFixed(2));
 
-            if (editingId) {
-                // UPDATE
-                const { error } = await supabase
-                    .from('cash_book')
-                    .update({
-                        date: formData.date,
-                        type: formData.type,
-                        category_id: formData.categoryId,
-                        category_name: category?.title || 'Diğer',
-                        amount: totalAmount,
-                        description: formData.subCategoryId
-                            ? `${subCategory?.description} - ${MONTH_NAMES[formData.targetMonth]} ${formData.targetYear}`
-                            : `Genel - ${MONTH_NAMES[formData.targetMonth]} ${formData.targetYear}`
-                    })
-                    .eq('id', editingId);
+            const buildSplitRows = () => {
+                const rows = [];
 
-                if (error) throw error;
-            } else {
-                // INSERT
-                const recordsToInsert = [];
-                const transactionDate = formData.date; // Fixed payment date for all installments
-
-                // Generate Installment Records
-                for (let i = 0; i < installments; i++) {
-                    // Calculate Target Period for the description (Month/Year)
-                    // Force numeric conversion to be extra safe
+                for (let i = 0; i < splitCount; i++) {
                     const startM = Number(formData.targetMonth);
                     const startY = Number(formData.targetYear);
-
-                    let targetM = (startM + i) % 12;
-                    let yearOffset = Math.floor((startM + i) / 12);
-                    let targetY = startY + yearOffset;
-
+                    const targetM = (startM + i) % 12;
+                    const targetY = startY + Math.floor((startM + i) / 12);
                     const currentPeriodString = `${MONTH_NAMES[targetM]} ${targetY}`;
-                    let currentFinalDescription = currentPeriodString;
+                    const amount = i === splitCount - 1 ? baseAmount + remainder : baseAmount;
 
-                    if (subCategory) {
-                        currentFinalDescription = `${subCategory.description} - ${currentPeriodString}`;
-                    } else {
-                        currentFinalDescription = `Genel - ${currentPeriodString}`;
-                    }
-
-                    recordsToInsert.push({
-                        date: transactionDate,
+                    rows.push({
+                        date: isBulkPayment ? formData.date : getShiftedDate(formData.date, i),
                         type: formData.type,
                         category_id: formData.categoryId,
                         category_name: category?.title || 'Diğer',
-                        amount: monthlyAmount,
-                        description: currentFinalDescription,
-                        installment_info: installments > 1 ? `${i + 1}/${installments}` : null
+                        amount: Number(amount.toFixed(2)),
+                        description: `${subCategory?.description || 'Genel'} - ${currentPeriodString}`,
+                        installment_info: !isBulkPayment && splitCount > 1 ? `${i + 1}/${splitCount}` : null
                     });
                 }
 
+                return rows;
+            };
+
+            if (editingId) {
+                const [firstRow, ...extraRows] = buildSplitRows();
+                const { error: updateError } = await supabase
+                    .from('cash_book')
+                    .update(firstRow)
+                    .eq('id', editingId);
+
+                if (updateError) throw updateError;
+
+                if (extraRows.length > 0) {
+                    const { error: insertError } = await supabase.from('cash_book').insert(extraRows);
+                    if (insertError) throw insertError;
+                }
+            } else {
+                const recordsToInsert = buildSplitRows();
                 const { error } = await supabase.from('cash_book').insert(recordsToInsert);
                 if (error) throw error;
             }
@@ -407,7 +447,8 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                 amount: '',
                 targetMonth: today.getMonth(),
                 targetYear: today.getFullYear(),
-                installments: 1
+                installments: 1,
+                bulkPayments: 1
             });
             fetchData();
 
@@ -616,7 +657,8 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                 const category = categories.find(c => c.id === row.categoryId);
                 const subCategory = category?.descriptions.find(d => d.id === row.subCategoryId);
                 const installments = Math.max(1, row.installments || 1);
-                const monthlyAmount = row.amount / installments;
+                const baseAmount = Math.floor((row.amount / installments) * 100) / 100;
+                const remainder = Number((row.amount - (baseAmount * installments)).toFixed(2));
 
                 for (let i = 0; i < installments; i++) {
                     const targetM = (Number(row.targetMonth) + i) % 12;
@@ -624,11 +666,11 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                     const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
 
                     rowsToInsert.push({
-                        date: row.date,
+                        date: getShiftedDate(row.date, i),
                         type: row.type,
                         category_id: row.categoryId,
                         category_name: category?.title || 'Diğer',
-                        amount: monthlyAmount,
+                        amount: Number((i === installments - 1 ? baseAmount + remainder : baseAmount).toFixed(2)),
                         description: `${subCategory?.description || row.subCategoryText || row.description || 'Genel'} - ${periodString}`,
                         installment_info: installments > 1 ? `${i + 1}/${installments}` : (row.installmentInfo || null)
                     });
@@ -652,7 +694,11 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
     };
 
     // --- Calculations ---
-    const filteredBySearch = records.filter(r =>
+    const futureInstallmentRecords = records.filter(isFutureInstallment);
+    const settledRecords = records.filter(record => !isFutureInstallment(record));
+    const futureInstallmentTotal = futureInstallmentRecords.reduce((acc, record) => acc + (record.type === 'income' ? record.amount : -record.amount), 0);
+
+    const filteredBySearch = settledRecords.filter(r =>
         r.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         r.category_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         r.amount.toString().includes(searchTerm) ||
@@ -669,13 +715,13 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
         return a.id.localeCompare(b.id);
     };
 
-    const yearIncome = records.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
-    const yearExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
+    const yearIncome = settledRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
+    const yearExpense = settledRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
     const currentBalance = openingBalance + yearIncome - yearExpense;
 
     let runningBalance = openingBalance;
     const balanceByRecordId = new Map<string, number>();
-    [...records]
+    [...settledRecords]
         .sort(compareRecordsForBalance)
         .forEach(record => {
             runningBalance += record.type === 'income' ? record.amount : -record.amount;
@@ -769,7 +815,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
             </div>
 
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center gap-4">
                     <div className="p-3 bg-slate-200 dark:bg-slate-700 rounded-xl text-slate-600 dark:text-slate-300">
                         <Wallet size={24} />
@@ -801,6 +847,19 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                         <p className="text-2xl font-bold text-red-700 dark:text-red-400 text-right">{formatCurrency(summaryExpense)}</p>
                     </div>
                 </div>
+                <button
+                    type="button"
+                    onClick={() => setShowFutureInstallments(prev => !prev)}
+                    className={`text-left p-5 rounded-2xl border flex items-center gap-4 transition-colors ${showFutureInstallments ? 'bg-amber-100 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700' : 'bg-amber-50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/20'}`}
+                >
+                    <div className="p-3 bg-amber-100 dark:bg-amber-800/30 rounded-xl text-amber-600 dark:text-amber-400">
+                        <Calendar size={24} />
+                    </div>
+                    <div>
+                        <p className="text-xs font-bold text-amber-700/70 dark:text-amber-400/70 uppercase">Gelecek Taksit</p>
+                        <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{formatCurrency(futureInstallmentTotal)}</p>
+                    </div>
+                </button>
             </div>
 
             {/* Filter Bar */}
@@ -814,6 +873,63 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                     className="w-full md:w-96 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pnr-purple dark:text-white"
                 />
             </div>
+
+            {showFutureInstallments && (
+                <div className="bg-white dark:bg-pnr-card border border-amber-200 dark:border-amber-800 rounded-2xl shadow-sm overflow-hidden">
+                    <div className="p-4 bg-amber-50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-800 flex justify-between items-center gap-3">
+                        <h3 className="font-bold text-amber-800 dark:text-amber-300">Gelecek Taksitler</h3>
+                        <div className="flex items-center gap-3">
+                            {canEdit && futureInstallmentRecords.some(record => selectedIds.has(record.id)) && (
+                                <button
+                                    type="button"
+                                    onClick={handleBulkDelete}
+                                    className="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm"
+                                >
+                                    Seçilenleri Sil ({futureInstallmentRecords.filter(record => selectedIds.has(record.id)).length})
+                                </button>
+                            )}
+                            <span className="font-mono font-bold text-amber-700 dark:text-amber-400">{formatCurrency(futureInstallmentTotal)}</span>
+                        </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs sm:text-sm">
+                            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 uppercase">
+                                <tr>
+                                    <th className="p-3 w-10"></th>
+                                    <th className="p-3">Tarih</th>
+                                    <th className="p-3">Kategori</th>
+                                    <th className="p-3">Açıklama</th>
+                                    <th className="p-3 text-center">Taksit</th>
+                                    <th className="p-3 text-right">Tutar</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {futureInstallmentRecords.length === 0 ? (
+                                    <tr><td colSpan={6} className="p-6 text-center text-slate-400">Gelecek taksit bulunmuyor.</td></tr>
+                                ) : [...futureInstallmentRecords].sort(compareRecordsForBalance).map(record => (
+                                    <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                                        <td className="p-3 text-center">
+                                            {canEdit && (
+                                                <input
+                                                    type="checkbox"
+                                                    className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
+                                                    checked={selectedIds.has(record.id)}
+                                                    onChange={() => toggleSelectRecord(record.id)}
+                                                />
+                                            )}
+                                        </td>
+                                        <td className="p-3 font-mono text-slate-600 dark:text-slate-300">{formatDate(getEffectiveInstallmentDate(record))}</td>
+                                        <td className="p-3 text-slate-700 dark:text-slate-300">{record.category_name}</td>
+                                        <td className="p-3 text-slate-700 dark:text-slate-300">{record.description}</td>
+                                        <td className="p-3 text-center font-mono text-slate-500">{record.installment_info}</td>
+                                        <td className={`p-3 text-right font-bold ${record.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{record.type === 'income' ? '+' : '-'}{formatCurrency(record.amount)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
 
             {/* Table */}
             <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
@@ -1261,25 +1377,45 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                 </div>
                             )}
 
-                            <div className={editingId ? "block" : "grid grid-cols-2 gap-4"}>
-                                {!editingId && (
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Taksit Sayısı</label>
-                                        <div className="relative">
-                                            <input
-                                                type="number"
-                                                min="1"
-                                                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
-                                                value={formData.installments || ''}
-                                                onChange={(e) => setFormData({ ...formData, installments: parseInt(e.target.value) || 0 })}
-                                                placeholder="1"
-                                            />
-                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">
-                                                {(!formData.installments || formData.installments <= 1) ? 'Tek Çekim' : 'Adet'}
-                                            </span>
-                                        </div>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Taksit Sayısı</label>
+                                    <div className="relative">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                                            value={formData.installments || ''}
+                                            onChange={(e) => {
+                                                const value = parseInt(e.target.value) || 0;
+                                                setFormData({ ...formData, installments: value, bulkPayments: value > 1 ? 1 : formData.bulkPayments });
+                                            }}
+                                            placeholder="1"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">
+                                            {(!formData.installments || formData.installments <= 1) ? 'Tek' : 'Adet'}
+                                        </span>
                                     </div>
-                                )}
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Toplu Ödeme</label>
+                                    <div className="relative">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                                            value={formData.bulkPayments || ''}
+                                            onChange={(e) => {
+                                                const value = parseInt(e.target.value) || 0;
+                                                setFormData({ ...formData, bulkPayments: value, installments: value > 1 ? 1 : formData.installments });
+                                            }}
+                                            placeholder="1"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">
+                                            {(!formData.bulkPayments || formData.bulkPayments <= 1) ? 'Yok' : 'Ay'}
+                                        </span>
+                                    </div>
+                                </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tutar (TL)</label>
                                     <input
@@ -1294,9 +1430,9 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                 </div>
                             </div>
 
-                            {formData.installments > 1 && formData.amount && (
+                            {(formData.installments > 1 || formData.bulkPayments > 1) && formData.amount && (
                                 <p className="text-xs text-slate-400 text-right font-mono">
-                                    Aylık Ödeme: {formatCurrency(parseFloat(formData.amount) / formData.installments)}
+                                    {formData.bulkPayments > 1 ? 'Dönem Payı' : 'Aylık Ödeme'}: {formatCurrency(parseFloat(formData.amount) / (formData.bulkPayments > 1 ? formData.bulkPayments : formData.installments))}
                                 </p>
                             )}
 

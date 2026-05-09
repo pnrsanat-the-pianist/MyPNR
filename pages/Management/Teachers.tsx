@@ -64,6 +64,10 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
   const [tempPhoto, setTempPhoto] = useState<File | null>(null);
   const [tempFiles, setTempFiles] = useState<File[]>([]);
 
+  const mapTeacherStatus = (status: string | null | undefined): Teacher['status'] => {
+    return status === 'inactive' || status === 'passive' ? 'passive' : 'active';
+  };
+
   // --- Data Fetching ---
   const fetchData = async () => {
     setLoading(true);
@@ -144,7 +148,7 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
             salaryType: t.salary_type || 'hourly',
             salaryAmount: t.salary_amount || 0,
             files: t.files || [],
-            status: t.status || 'active',
+            status: mapTeacherStatus(t.status),
             branches: groupedBranches
           };
         });
@@ -192,10 +196,13 @@ const Teachers: React.FC<TeachersProps> = ({ canEdit = true }) => {
     setTeachers(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
 
     try {
-      await supabase.from('teachers').update({ status: newStatus }).eq('id', id);
-    } catch (err) {
+      const dbStatus = newStatus === 'passive' ? 'inactive' : 'active';
+      const { error } = await supabase.from('teachers').update({ status: dbStatus }).eq('id', id);
+      if (error) throw error;
+    } catch (err: any) {
       console.error('Status update failed', err);
-      // Revert if needed
+      setTeachers(prev => prev.map(t => t.id === id ? { ...t, status: teacher.status } : t));
+      alert('Öğretmen durumu güncellenemedi: ' + err.message);
     }
   };
 

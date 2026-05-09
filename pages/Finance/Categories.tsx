@@ -5,7 +5,7 @@ import {
   RefreshCcw, ArrowRight
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
-import { syncBranchStudentsToFinance, syncRefundStudentsToFinance } from '../../lib/financeRefundSync';
+import { syncBranchStudentsToFinance, syncRefundStudentsToFinance, syncShowStudentsToFinance } from '../../lib/financeRefundSync';
 import { makeDottedIReadable } from '../../lib/readableText';
 
 // --- Types ---
@@ -179,6 +179,7 @@ const FinanceCategories: React.FC<FinanceCategoriesProps> = ({ canEdit = true })
       if (canEdit) {
         try {
           await syncRefundStudentsToFinance();
+          await syncShowStudentsToFinance();
           await syncBranchStudentsToFinance();
         } catch (syncError) {
           console.warn('Finans öğrenci senkronizasyonu yapılamadı:', syncError);
@@ -256,6 +257,7 @@ const FinanceCategories: React.FC<FinanceCategoriesProps> = ({ canEdit = true })
       else setNewExpenseTitle('');
 
       if (type === 'income') {
+        await syncShowStudentsToFinance();
         await syncBranchStudentsToFinance();
         await fetchData();
       }
