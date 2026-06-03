@@ -5,7 +5,7 @@ import StudentDistributionChart from '../../components/Dashboard/StudentDistribu
 import TeacherPerformanceChart from '../../components/Dashboard/TeacherPerformanceChart';
 import { PNR_PALETTE } from '../../constants';
 import { supabase } from '../../lib/supabaseClient';
-import { BranchStat, Student, TeacherStat } from '../../types';
+import { BranchStat, Student, TeacherStat, UserRole } from '../../types';
 
 interface TodoItem {
     id: string;
@@ -24,12 +24,27 @@ interface DailyLesson {
     type: 'group' | 'individual';
 }
 
+interface AdminDashboardProps {
+    currentUserRole: UserRole;
+    permissions: Record<string, { view: boolean; edit: boolean }>;
+}
+
+const DASHBOARD_PERMISSION_KEYS = {
+    studentDistribution: 'dashboard-student-distribution',
+    todos: 'dashboard-todos',
+    leads: 'dashboard-leads',
+    finance: 'dashboard-finance',
+    teacherDistribution: 'dashboard-teacher-distribution',
+    dailySchedule: 'dashboard-daily-schedule',
+    recentStudents: 'dashboard-recent-students',
+};
+
 const MONTH_NAMES = [
     'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
     'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
 ];
 
-const AdminDashboard: React.FC = () => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUserRole, permissions }) => {
     const [loading, setLoading] = useState(true);
 
     // Charts & Lists
@@ -131,6 +146,21 @@ const AdminDashboard: React.FC = () => {
     const navigateTo = (path: string) => {
         window.location.hash = path;
     };
+
+    const hasDashboardPermission = (resourceId: string, field: 'view' | 'edit') => {
+        if (currentUserRole === UserRole.ADMIN) return true;
+
+        const resourcePermission = permissions[resourceId];
+        if (resourcePermission) return resourcePermission[field];
+
+        const dashboardPermission = permissions.dashboard;
+        if (dashboardPermission) return dashboardPermission[field];
+
+        return field === 'view' && Object.keys(permissions).length === 0;
+    };
+
+    const canViewDashboardCard = (resourceId: string) => hasDashboardPermission(resourceId, 'view');
+    const canEditDashboardCard = (resourceId: string) => hasDashboardPermission(resourceId, 'edit');
 
     // --- Real Data Fetching ---
     const fetchDashboardData = async () => {
@@ -338,6 +368,7 @@ const AdminDashboard: React.FC = () => {
     };
 
     const handleCompleteTodo = async (id: string) => {
+        if (!canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.todos)) return;
         setTodos(prev => prev.filter(t => t.id !== id));
         try {
             await supabase.from('todos').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', id);
@@ -356,6 +387,9 @@ const AdminDashboard: React.FC = () => {
         { label: 'Denizbank POS', value: financeBalances.denizbankPos, icon: CreditCard, color: 'text-cyan-600', bg: 'bg-cyan-50 dark:bg-cyan-900/10', path: '/finance/denizbank-pos' },
         { label: 'Vakıfbank', value: financeBalances.vakifbank, icon: Landmark, color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-900/10', path: '/finance/vakifbank' }
     ];
+
+    const visibleDashboardCardCount = Object.values(DASHBOARD_PERMISSION_KEYS)
+        .filter(resourceId => canViewDashboardCard(resourceId)).length;
 
     return (
         <div className="w-full max-w-full space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -385,19 +419,25 @@ const AdminDashboard: React.FC = () => {
             </div>
 
             {/* --- MAIN GRID LAYOUT --- */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {visibleDashboardCardCount === 0 ? (
+                <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-10 text-center text-slate-500 dark:text-slate-400">
+                    Dashboard üzerinde görüntüleme yetkiniz olan kutu bulunmuyor.
+                </div>
+            ) : <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
                 {/* --- LEFT COLUMN: CHARTS (Span 4) --- */}
                 <div className="lg:col-span-4 flex flex-col gap-6">
 
                     {/* 1. ÖĞRENCİ DAĞILIMI (Requested 1st) */}
-                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm dark:shadow-none flex flex-col min-h-[400px]">
+                    {canViewDashboardCard(DASHBOARD_PERMISSION_KEYS.studentDistribution) && <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm dark:shadow-none flex flex-col min-h-[400px]">
                         <div className="absolute top-0 right-0 w-48 h-48 bg-pnr-purple/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
                         <div className="flex items-center justify-between mb-4 relative z-10">
                             <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display">Öğrenci Dağılımı</h2>
-                            <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="CRM Sayfasına Git">
-                                <ArrowRight size={18} />
-                            </button>
+                            {canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.studentDistribution) && (
+                                <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="CRM Sayfasına Git">
+                                    <ArrowRight size={18} />
+                                </button>
+                            )}
                         </div>
                         <div className="flex-1 flex items-center justify-center relative z-10">
                             {loading ? (
@@ -413,15 +453,17 @@ const AdminDashboard: React.FC = () => {
                                 </div>
                             )}
                         </div>
-                    </div>
+                    </div>}
 
                     {/* 5. ÖĞRETMEN DAĞILIMI (Requested 5th) */}
-                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm dark:shadow-none flex flex-col h-[380px]">
+                    {canViewDashboardCard(DASHBOARD_PERMISSION_KEYS.teacherDistribution) && <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm dark:shadow-none flex flex-col h-[380px]">
                         <div className="flex items-center justify-between mb-4 relative z-10">
                             <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display">Öğretmen Dağılımı</h2>
-                            <button onClick={() => navigateTo('/management/teachers')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Öğretmenler Sayfasına Git">
-                                <ArrowRight size={18} />
-                            </button>
+                            {canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.teacherDistribution) && (
+                                <button onClick={() => navigateTo('/management/teachers')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Öğretmenler Sayfasına Git">
+                                    <ArrowRight size={18} />
+                                </button>
+                            )}
                         </div>
                         <div className="flex-1 w-full overflow-hidden">
                             {loading ? (
@@ -432,7 +474,7 @@ const AdminDashboard: React.FC = () => {
                                 <div className="text-center text-slate-400 py-8 italic">Veri yok</div>
                             )}
                         </div>
-                    </div>
+                    </div>}
 
                 </div>
 
@@ -440,15 +482,17 @@ const AdminDashboard: React.FC = () => {
                 <div className="lg:col-span-8 flex flex-col gap-6">
 
                     {/* 2. TO-DO LIST (Requested 2nd) */}
-                    <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm dark:shadow-none">
+                    {canViewDashboardCard(DASHBOARD_PERMISSION_KEYS.todos) && <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm dark:shadow-none">
                         <div className="flex items-center justify-between mb-4">
                             <h2 className="text-xl font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                 <CheckSquare size={22} className="text-pnr-purple" />
                                 Görevlerim (To-Do)
                             </h2>
-                            <button onClick={() => navigateTo('/management/todo')} className="flex items-center gap-1 text-sm font-bold text-pnr-purple hover:underline bg-pnr-purple/5 px-3 py-1.5 rounded-lg transition-all">
-                                Tümünü Gör <ArrowRight size={16} />
-                            </button>
+                            {canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.todos) && (
+                                <button onClick={() => navigateTo('/management/todo')} className="flex items-center gap-1 text-sm font-bold text-pnr-purple hover:underline bg-pnr-purple/5 px-3 py-1.5 rounded-lg transition-all">
+                                    Tümünü Gör <ArrowRight size={16} />
+                                </button>
+                            )}
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -457,12 +501,14 @@ const AdminDashboard: React.FC = () => {
                             ) : todos.length > 0 ? (
                                 todos.map((task) => (
                                     <div key={task.id} className="group flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 hover:border-pnr-purple dark:hover:border-pnr-purple transition-all">
-                                        <button
-                                            onClick={() => handleCompleteTodo(task.id)}
-                                            className="mt-0.5 w-5 h-5 rounded-md border-2 border-slate-300 dark:border-slate-600 hover:border-pnr-purple hover:bg-pnr-purple text-transparent hover:text-white flex items-center justify-center transition-all shrink-0"
-                                        >
-                                            <CheckCircle2 size={14} />
-                                        </button>
+                                        {canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.todos) && (
+                                            <button
+                                                onClick={() => handleCompleteTodo(task.id)}
+                                                className="mt-0.5 w-5 h-5 rounded-md border-2 border-slate-300 dark:border-slate-600 hover:border-pnr-purple hover:bg-pnr-purple text-transparent hover:text-white flex items-center justify-center transition-all shrink-0"
+                                            >
+                                                <CheckCircle2 size={14} />
+                                            </button>
+                                        )}
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-bold text-slate-800 dark:text-white leading-tight mb-0.5 truncate">{task.title}</p>
                                             <div className="flex items-center gap-2 text-[10px] text-slate-400">
@@ -480,24 +526,26 @@ const AdminDashboard: React.FC = () => {
                                 </div>
                             )}
                         </div>
-                    </div>
+                    </div>}
 
                     {/* --- 2x2 GRID FOR OTHER STATS --- */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                         {/* 3. YENİ TALEPLER (Requested 3rd) */}
-                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
+                        {canViewDashboardCard(DASHBOARD_PERMISSION_KEYS.leads) && <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <UserPlus className="text-pnr-purple" size={20} /> Yeni Talepler
                                 </h2>
-                                <button
-                                    onClick={() => navigateTo('/management/leads')}
-                                    className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                                    title="Yeni Talepler Sayfasına Git"
-                                >
-                                    <ArrowRight size={18} />
-                                </button>
+                                {canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.leads) && (
+                                    <button
+                                        onClick={() => navigateTo('/management/leads')}
+                                        className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                        title="Yeni Talepler Sayfasına Git"
+                                    >
+                                        <ArrowRight size={18} />
+                                    </button>
+                                )}
                             </div>
                             <div className="grid grid-cols-2 gap-3 flex-1 content-center">
                                 <div className="bg-yellow-50 dark:bg-yellow-900/10 p-3 rounded-xl flex items-center justify-between border border-yellow-100 dark:border-yellow-900/30">
@@ -529,17 +577,19 @@ const AdminDashboard: React.FC = () => {
                                     <MessageSquare size={18} className="text-orange-400 opacity-60" />
                                 </div>
                             </div>
-                        </div>
+                        </div>}
 
                         {/* 4. FİNANSAL DURUM (Requested 4th) */}
-                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
+                        {canViewDashboardCard(DASHBOARD_PERMISSION_KEYS.finance) && <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <Wallet className="text-pnr-green" size={20} /> Finansal Durum
                                 </h2>
-                                <button onClick={() => navigateTo('/finance/profitability')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Finans Sayfasına Git">
-                                    <ArrowRight size={18} />
-                                </button>
+                                {canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.finance) && (
+                                    <button onClick={() => navigateTo('/finance/profitability')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Finans Sayfasına Git">
+                                        <ArrowRight size={18} />
+                                    </button>
+                                )}
                             </div>
 
                             <div className="flex-1 space-y-2">
@@ -550,7 +600,8 @@ const AdminDashboard: React.FC = () => {
                                             key={item.label}
                                             type="button"
                                             onClick={() => navigateTo(item.path)}
-                                            className="w-full flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/20 hover:border-pnr-purple/40 hover:bg-white dark:hover:bg-slate-800/50 transition-all text-left group"
+                                            disabled={!canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.finance)}
+                                            className="w-full flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/20 hover:border-pnr-purple/40 hover:bg-white dark:hover:bg-slate-800/50 transition-all text-left group disabled:cursor-default disabled:hover:border-slate-100 disabled:hover:bg-slate-50/70 dark:disabled:hover:bg-slate-900/20"
                                         >
                                             <div className="flex items-center gap-2 min-w-0">
                                                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${item.bg}`}>
@@ -569,7 +620,8 @@ const AdminDashboard: React.FC = () => {
                             <button
                                 type="button"
                                 onClick={() => navigateTo('/finance/profitability')}
-                                className="w-full mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 rounded-xl px-2 pb-2 transition-colors"
+                                disabled={!canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.finance)}
+                                className="w-full mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 rounded-xl px-2 pb-2 transition-colors disabled:cursor-default disabled:hover:bg-transparent"
                             >
                                 <div className="flex items-center gap-2">
                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center ${financeBalances.total >= 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
@@ -586,17 +638,19 @@ const AdminDashboard: React.FC = () => {
                                     {financeBalances.total >= 0 ? 'Pozitif' : 'Negatif'}
                                 </span>
                             </button>
-                        </div>
+                        </div>}
 
                         {/* 6. GÜNLÜK PROGRAM (Requested 6th) */}
-                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
+                        {canViewDashboardCard(DASHBOARD_PERMISSION_KEYS.dailySchedule) && <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <Calendar className="text-pnr-orange" size={20} /> Günlük Program
                                 </h2>
-                                <button onClick={() => navigateTo('/education/schedule')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Program Sayfasına Git">
-                                    <ArrowRight size={18} />
-                                </button>
+                                {canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.dailySchedule) && (
+                                    <button onClick={() => navigateTo('/education/schedule')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Program Sayfasına Git">
+                                        <ArrowRight size={18} />
+                                    </button>
+                                )}
                             </div>
                             <div className="flex-1 overflow-y-auto max-h-[160px] custom-scrollbar pr-1 space-y-2">
                                 {loading ? (
@@ -623,17 +677,19 @@ const AdminDashboard: React.FC = () => {
                                     </div>
                                 )}
                             </div>
-                        </div>
+                        </div>}
 
                         {/* 7. SON KAYITLAR (Requested 7th) */}
-                        <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
+                        {canViewDashboardCard(DASHBOARD_PERMISSION_KEYS.recentStudents) && <div className="bg-white dark:bg-pnr-card border border-slate-200 dark:border-slate-800 p-6 rounded-3xl shadow-sm dark:shadow-none flex flex-col h-full">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                     <Users className="text-pnr-cyan" size={20} /> Son Kayıtlar
                                 </h2>
-                                <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Öğrenci Listesine Git">
-                                    <ArrowRight size={18} />
-                                </button>
+                                {canEditDashboardCard(DASHBOARD_PERMISSION_KEYS.recentStudents) && (
+                                    <button onClick={() => navigateTo('/education/crm')} className="text-slate-400 hover:text-pnr-purple p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer" title="Öğrenci Listesine Git">
+                                        <ArrowRight size={18} />
+                                    </button>
+                                )}
                             </div>
                             <div className="flex-1 space-y-2">
                                 {loading ? (
@@ -657,12 +713,12 @@ const AdminDashboard: React.FC = () => {
                                 <span className="text-slate-500 font-bold uppercase tracking-wider">Pasifler (Bu Ay):</span>
                                 <span className="font-black text-red-500 text-xs px-2 py-0.5 bg-red-50 dark:bg-red-900/20 rounded-full">{passiveThisMonth}</span>
                             </div>
-                        </div>
+                        </div>}
 
                     </div>
 
                 </div>
-            </div>
+            </div>}
 
             <div className="pb-10"></div>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Search, Users, Calendar, Clock, Plus, X,
     CheckCircle2, AlertCircle, MapPin, ChevronRight,
@@ -18,7 +18,7 @@ interface ClassStudent {
     id: string;
     name: string;
     subBranch: string;
-    assignedClassId?: string | null; // Database: dance_class_id
+    assignedClassId?: string | null;
 }
 
 interface DanceClass {
@@ -29,13 +29,33 @@ interface DanceClass {
     teacherName?: string; // For UI display
     weeklyHours: number;
     schedule: ScheduleItem[]; // Stored as jsonb 'schedule_config'
+    classroomId?: string | null;
     classroom: string;
 }
 
 interface TeacherOption {
     id: string;
     name: string;
+    subBranches: string[];
 }
+
+interface ClassroomOption {
+    id: string;
+    name: string;
+    allowedBranches: string[];
+}
+
+const normalizeBranchName = (value: string) => value.toLocaleLowerCase('tr-TR').trim();
+
+const DAY_INDEX_TO_NAME: Record<number, string> = {
+    1: 'Pazartesi',
+    2: 'Salı',
+    3: 'Çarşamba',
+    4: 'Perşembe',
+    5: 'Cuma',
+    6: 'Cumartesi',
+    7: 'Pazar'
+};
 
 // --- CONSTANTS ---
 
@@ -51,6 +71,7 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
     const [classes, setClasses] = useState<DanceClass[]>([]);
     const [students, setStudents] = useState<ClassStudent[]>([]);
     const [teachersList, setTeachersList] = useState<TeacherOption[]>([]);
+    const [classroomsList, setClassroomsList] = useState<ClassroomOption[]>([]);
     const [loading, setLoading] = useState(true);
 
     // Modal States
@@ -67,31 +88,130 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
         name: string;
         subBranch: string;
         teacherId: string;
+        classroomId: string;
         weeklyHours: number;
         schedule: ScheduleItem[];
     }>({
         name: '',
         subBranch: 'Bale',
         teacherId: '',
+        classroomId: '',
         weeklyHours: 1,
         schedule: [{ day: 'Cumartesi', startTime: '09:00', endTime: '10:00' }]
     });
+
+    const filteredTeachersList = useMemo(() => {
+        const selectedBranch = normalizeBranchName(currentClassForm.subBranch);
+        return teachersList.filter(teacher =>
+            teacher.subBranches.some(branch => normalizeBranchName(branch) === selectedBranch)
+        );
+    }, [teachersList, currentClassForm.subBranch]);
+
+    const filteredClassroomsList = useMemo(() => {
+        const selectedBranch = normalizeBranchName(currentClassForm.subBranch);
+        return classroomsList.filter(classroom =>
+            classroom.allowedBranches.some(branch => normalizeBranchName(branch) === selectedBranch)
+        );
+    }, [classroomsList, currentClassForm.subBranch]);
+
+    useEffect(() => {
+        if (!currentClassForm.classroomId) return;
+        if (!filteredClassroomsList.some(classroom => classroom.id === currentClassForm.classroomId)) {
+            setCurrentClassForm(prev => ({ ...prev, classroomId: '' }));
+        }
+    }, [filteredClassroomsList, currentClassForm.classroomId]);
 
     // --- DATA FETCHING ---
 
     const fetchData = async () => {
         setLoading(true);
         try {
-            // 1. Fetch Classes with Teacher info
-            const { data: classData, error: classError } = await supabase
+            // 1. Fetch Classes
+            let classData: any[] = [];
+            const { data: classDataWithClassroom, error: classError } = await supabase
                 .from('dance_classes')
-                .select(`
-                *,
-                teachers ( id, name )
-            `)
+                .select('*, classrooms(name)')
                 .order('created_at', { ascending: false });
 
-            if (classError) throw classError;
+            if (classError) {
+                const { data: fallbackClassData, error: fallbackClassError } = await supabase
+                    .from('dance_classes')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (fallbackClassError) throw fallbackClassError;
+                classData = fallbackClassData || [];
+            } else {
+                classData = classDataWithClassroom || [];
+            }
+
+            // 2. Fetch Active Teachers
+            const { data: teacherData, error: teacherError } = await supabase
+                .from('teachers')
+                .select('*')
+                .eq('status', 'active');
+
+            if (teacherError) throw teacherError;
+
+            const { data: teacherBranchData, error: teacherBranchError } = await supabase
+                .from('sub_branch_teachers')
+                .select(`
+                    teacher_id,
+                    sub_branches ( name )
+                `);
+
+            if (teacherBranchError) throw teacherBranchError;
+
+            const branchesByTeacherId = new Map<string, string[]>();
+            (teacherBranchData || []).forEach((relation: any) => {
+                const branchName = relation.sub_branches?.name;
+                if (!relation.teacher_id || !branchName) return;
+                const branches = branchesByTeacherId.get(relation.teacher_id) || [];
+                branches.push(branchName);
+                branchesByTeacherId.set(relation.teacher_id, branches);
+            });
+
+            const teacherOptions = (teacherData || [])
+                .map((teacher: any) => ({
+                    id: teacher.id,
+                    name: teacher.name || teacher.full_name || 'İsimsiz Öğretmen',
+                    subBranches: branchesByTeacherId.get(teacher.id) || []
+                }))
+                .sort((a, b) => a.name.localeCompare(b.name, 'tr-TR'));
+            const teacherNameById = new Map(teacherOptions.map(teacher => [teacher.id, teacher.name]));
+            setTeachersList(teacherOptions);
+
+            let classroomData: any[] = [];
+            const { data: classroomsWithBranches, error: classroomError } = await supabase
+                .from('classrooms')
+                .select('id, name, allowed_branches, is_active')
+                .eq('is_active', true)
+                .order('name');
+
+            if (classroomError) {
+                if (classroomError.message?.includes('allowed_branches')) {
+                    const { data: fallbackClassrooms, error: fallbackClassroomError } = await supabase
+                        .from('classrooms')
+                        .select('id, name, is_active')
+                        .eq('is_active', true)
+                        .order('name');
+
+                    if (fallbackClassroomError) throw fallbackClassroomError;
+                    classroomData = fallbackClassrooms || [];
+                } else {
+                    throw classroomError;
+                }
+            } else {
+                classroomData = classroomsWithBranches || [];
+            }
+
+            const classroomOptions = classroomData.map((classroom: any) => ({
+                id: classroom.id,
+                name: classroom.name,
+                allowedBranches: Array.isArray(classroom.allowed_branches) ? classroom.allowed_branches : []
+            }));
+            const classroomNameById = new Map(classroomOptions.map(classroom => [classroom.id, classroom.name]));
+            setClassroomsList(classroomOptions);
 
             if (classData) {
                 const mappedClasses: DanceClass[] = classData.map((c: any) => ({
@@ -99,38 +219,42 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
                     name: c.name,
                     subBranch: c.sub_branch,
                     teacherId: c.teacher_id,
-                    teacherName: c.teachers?.name || 'Bilinmiyor',
-                    weeklyHours: c.weekly_hours,
-                    schedule: c.schedule_config || [],
-                    classroom: c.classroom
+                    teacherName: teacherNameById.get(c.teacher_id) || 'Bilinmiyor',
+                    weeklyHours: c.weekly_hours || 1,
+                    schedule: c.schedule_config || (c.day_of_week && c.time_slot ? [{
+                        day: DAY_INDEX_TO_NAME[c.day_of_week] || 'Cumartesi',
+                        startTime: c.time_slot,
+                        endTime: calculateEndTime(c.time_slot)
+                    }] : []),
+                    classroomId: c.classroom_id || null,
+                    classroom: c.classrooms?.name || classroomNameById.get(c.classroom_id) || c.classroom || 'Derslik seçilmedi'
                 }));
                 setClasses(mappedClasses);
             }
 
-            // 2. Fetch Active Teachers
-            const { data: teacherData } = await supabase
-                .from('teachers')
-                .select('id, name')
-                .eq('status', 'active')
-                .order('name');
-
-            setTeachersList(teacherData || []);
-
             // 3. Fetch Students (Only those relevant to dance/group classes or generic)
-            // We fetch basic info + their assigned class
             const { data: studentData, error: studentError } = await supabase
                 .from('students')
-                .select('id, full_name, sub_branch, dance_class_id')
+                .select('id, full_name, sub_branch')
                 .eq('status', 'active'); // Only active students
 
             if (studentError) throw studentError;
+
+            const { data: enrollmentData, error: enrollmentError } = await supabase
+                .from('dance_enrollments')
+                .select('class_id, student_id')
+                .eq('status', 'active');
+
+            if (enrollmentError) throw enrollmentError;
+
+            const classIdByStudentId = new Map((enrollmentData || []).map((enrollment: any) => [enrollment.student_id, enrollment.class_id]));
 
             if (studentData) {
                 const mappedStudents: ClassStudent[] = studentData.map((s: any) => ({
                     id: s.id,
                     name: s.full_name,
                     subBranch: s.sub_branch || 'Genel',
-                    assignedClassId: s.dance_class_id
+                    assignedClassId: classIdByStudentId.get(s.id) || null
                 }));
                 setStudents(mappedStudents);
             }
@@ -162,7 +286,9 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
     };
 
     // Check overlap for a specific time slot against all existing classes
-    const checkTimeConflict = (day: string, start: string, end: string, excludeClassId?: string): boolean => {
+    const checkTimeConflict = (day: string, start: string, end: string, classroomId: string, excludeClassId?: string): boolean => {
+        if (!classroomId) return false;
+
         const toMinutes = (time: string) => {
             const [h, m] = time.split(':').map(Number);
             return h * 60 + m;
@@ -173,6 +299,7 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
 
         for (const cls of classes) {
             if (excludeClassId && cls.id === excludeClassId) continue; // Skip self when editing
+            if (cls.classroomId !== classroomId) continue;
 
             for (const item of cls.schedule) {
                 if (item.day === day) {
@@ -197,6 +324,7 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
             name: '',
             subBranch: 'Bale',
             teacherId: '',
+            classroomId: '',
             weeklyHours: 1,
             schedule: [{ day: 'Cumartesi', startTime: '09:00', endTime: '10:00' }]
         });
@@ -211,6 +339,7 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
             name: cls.name,
             subBranch: cls.subBranch,
             teacherId: cls.teacherId,
+            classroomId: cls.classroomId || '',
             weeklyHours: cls.weeklyHours,
             schedule: [...cls.schedule]
         });
@@ -221,14 +350,14 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
 
     const handleSaveClass = async () => {
         // Basic validation
-        if (!currentClassForm.name || !currentClassForm.teacherId) {
-            alert("Lütfen sınıf adı ve öğretmen seçiniz.");
+        if (!currentClassForm.name || !currentClassForm.teacherId || !currentClassForm.classroomId) {
+            alert("Lütfen sınıf adı, öğretmen ve derslik seçiniz.");
             return;
         }
 
         // Conflict Check (Again before save)
         for (const item of currentClassForm.schedule) {
-            if (checkTimeConflict(item.day, item.startTime, item.endTime, editingClassId || undefined)) {
+            if (checkTimeConflict(item.day, item.startTime, item.endTime, currentClassForm.classroomId, editingClassId || undefined)) {
                 alert(`Çakışma var: ${item.day} ${item.startTime}`);
                 return;
             }
@@ -240,9 +369,9 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
                 name: currentClassForm.name,
                 sub_branch: currentClassForm.subBranch,
                 teacher_id: currentClassForm.teacherId,
+                classroom_id: currentClassForm.classroomId,
                 weekly_hours: currentClassForm.weeklyHours,
-                schedule_config: currentClassForm.schedule,
-                classroom: 'Bale Stüdyosu'
+                schedule_config: currentClassForm.schedule
             };
 
             if (editingClassId) {
@@ -281,9 +410,9 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
 
         try {
             const { error } = await supabase
-                .from('students')
-                .update({ dance_class_id: null })
-                .eq('id', studentId);
+                .from('dance_enrollments')
+                .delete()
+                .eq('student_id', studentId);
 
             if (error) throw error;
         } catch (err: any) {
@@ -298,10 +427,16 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
         setIsAddStudentModalOpen(null);
 
         try {
+            const { error: deleteError } = await supabase
+                .from('dance_enrollments')
+                .delete()
+                .eq('student_id', studentId);
+
+            if (deleteError) throw deleteError;
+
             const { error } = await supabase
-                .from('students')
-                .update({ dance_class_id: classId })
-                .eq('id', studentId);
+                .from('dance_enrollments')
+                .insert({ class_id: classId, student_id: studentId, status: 'active' });
 
             if (error) throw error;
         } catch (err: any) {
@@ -343,9 +478,10 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
     };
 
     const validateStep2 = () => {
+        const classroomName = classroomsList.find(classroom => classroom.id === currentClassForm.classroomId)?.name || 'Seçili derslik';
         for (const item of currentClassForm.schedule) {
-            if (checkTimeConflict(item.day, item.startTime, item.endTime, editingClassId || undefined)) {
-                setConflictError(`Çakışma Tespit Edildi! ${item.day} ${item.startTime}-${item.endTime} saatlerinde Bale Stüdyosu dolu.`);
+            if (checkTimeConflict(item.day, item.startTime, item.endTime, currentClassForm.classroomId, editingClassId || undefined)) {
+                setConflictError(`Çakışma Tespit Edildi! ${item.day} ${item.startTime}-${item.endTime} saatlerinde ${classroomName} dolu.`);
                 return false;
             }
         }
@@ -542,7 +678,7 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
                                         <select
                                             className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-orange focus:outline-none"
                                             value={currentClassForm.subBranch}
-                                            onChange={(e) => setCurrentClassForm({ ...currentClassForm, subBranch: e.target.value })}
+                                            onChange={(e) => setCurrentClassForm({ ...currentClassForm, subBranch: e.target.value, teacherId: '', classroomId: '' })}
                                         >
                                             {SUB_BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
                                         </select>
@@ -572,9 +708,19 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
                                         </div>
                                         <div>
                                             <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Derslik</label>
-                                            <div className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-500 dark:text-slate-400 flex items-center gap-2 cursor-not-allowed">
-                                                <MapPin size={16} /> Bale Stüdyosu
-                                            </div>
+                                            <select
+                                                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-orange focus:outline-none"
+                                                value={currentClassForm.classroomId}
+                                                onChange={(e) => setCurrentClassForm({ ...currentClassForm, classroomId: e.target.value })}
+                                            >
+                                                <option value="">Seçiniz...</option>
+                                                {filteredClassroomsList.map(classroom => (
+                                                    <option key={classroom.id} value={classroom.id}>{classroom.name}</option>
+                                                ))}
+                                                {filteredClassroomsList.length === 0 && (
+                                                    <option value="" disabled>Bu alt branşa uygun aktif derslik yok</option>
+                                                )}
+                                            </select>
                                         </div>
                                     </div>
 
@@ -586,9 +732,12 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
                                             onChange={(e) => setCurrentClassForm({ ...currentClassForm, teacherId: e.target.value })}
                                         >
                                             <option value="">Seçiniz...</option>
-                                            {teachersList.map(t => (
+                                            {filteredTeachersList.map(t => (
                                                 <option key={t.id} value={t.id}>{t.name}</option>
                                             ))}
+                                            {filteredTeachersList.length === 0 && (
+                                                <option value="" disabled>Bu alt branşa bağlı öğretmen yok</option>
+                                            )}
                                         </select>
                                     </div>
                                 </div>
@@ -666,8 +815,8 @@ const DanceClasses: React.FC<DanceClassesProps> = ({ canEdit = true }) => {
                                 <button
                                     onClick={() => {
                                         if (step === 1) {
-                                            if (!currentClassForm.name || !currentClassForm.teacherId) {
-                                                alert('Lütfen sınıf adı ve öğretmen seçiniz.');
+                                            if (!currentClassForm.name || !currentClassForm.teacherId || !currentClassForm.classroomId) {
+                                                alert('Lütfen sınıf adı, öğretmen ve derslik seçiniz.');
                                                 return;
                                             }
                                             setStep(2);

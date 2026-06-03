@@ -15,9 +15,11 @@ ALTER TABLE category_automation_rules ENABLE ROW LEVEL SECURITY;
 -- Policies
 DROP POLICY IF EXISTS "Everyone with financial access can view rules" ON category_automation_rules;
 DROP POLICY IF EXISTS "Admins and accountants can manage rules" ON category_automation_rules;
+DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON category_automation_rules;
+DROP POLICY IF EXISTS "Enable all access for authenticated users" ON category_automation_rules;
 
 CREATE POLICY "Enable read access for all authenticated users" ON category_automation_rules FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "Enable all access for authenticated users" ON category_automation_rules FOR ALL WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Enable all access for authenticated users" ON category_automation_rules FOR ALL USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
 
 -- Add sample rule mentioned by user
 -- Note: This requires existing category/sub-category IDs. 

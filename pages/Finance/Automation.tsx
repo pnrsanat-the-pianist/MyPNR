@@ -129,13 +129,18 @@ const CategoryAutomation: React.FC<{ canEdit?: boolean }> = ({ canEdit = true })
         if (!canEdit || !confirm("Bu kuralı silmek istediğinize emin misiniz?")) return;
 
         try {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('category_automation_rules')
                 .delete()
-                .eq('id', id);
+                .eq('id', id)
+                .select('id');
 
             if (error) throw error;
-            setRules(rules.filter(r => r.id !== id));
+            if (!data || data.length === 0) {
+                throw new Error('Supabase kaydı silmedi. category_automation_rules DELETE RLS politikasını kontrol edin.');
+            }
+
+            setRules(prev => prev.filter(r => r.id !== id));
         } catch (err: any) {
             alert("Silme hatası: " + err.message);
         }
@@ -145,7 +150,10 @@ const CategoryAutomation: React.FC<{ canEdit?: boolean }> = ({ canEdit = true })
         r.keyword.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const getCategoryName = (id: string) => categories.find(c => c.id === id)?.title || 'Bilinmiyor';
+    const getCategoryName = (id: string) => {
+        const category = categories.find(c => c.id === id);
+        return category ? `${category.title} (${category.type === 'income' ? 'Gelir' : 'Gider'})` : 'Bilinmiyor';
+    };
     const getSubCategoryName = (catId: string, subId: string) => {
         const cat = categories.find(c => c.id === catId);
         return cat?.descriptions.find(d => d.id === subId)?.description || '-';

@@ -49,10 +49,11 @@ interface SortConfig {
 
 interface LeadsProps {
   currentUserRole: UserRole;
+  currentUserName?: string;
   canEdit?: boolean;
 }
 
-const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
+const Leads: React.FC<LeadsProps> = ({ currentUserRole, currentUserName = '', canEdit = true }) => {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -72,7 +73,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
     parentName: '',
     age: '',
     branch: '', // Initialize as empty
-    phone: '0',
+    phone: '',
     source: 'Instagram' as LeadSource,
     initialNote: '',
     followUpDate: new Date().toISOString().split('T')[0]
@@ -80,6 +81,15 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
 
   // New Note Input State (mapped by lead ID)
   const [noteInputs, setNoteInputs] = useState<Record<string, string>>({});
+
+  const noteAuthor = currentUserName.trim() || 'Kullanıcı';
+  const branchOptions = subBranches.length > 0 ? subBranches : BRANCH_OPTIONS;
+  const selectedBranches = newLead.branch.split(',').map(branch => branch.trim()).filter(Boolean);
+
+  const handleBranchSelectionChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedValues = Array.from(event.target.selectedOptions, option => option.value);
+    setNewLead({ ...newLead, branch: selectedValues.join(', ') });
+  };
 
   // --- FETCH DATA ---
   const fetchData = async () => {
@@ -96,11 +106,11 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
       if (data) {
         const mappedLeads: Lead[] = data.map((item: any) => ({
           id: item.id,
-          studentName: item.student_name,
+          studentName: item.student_name || '',
           age: item.age || 0,
-          branch: item.branch || 'Bale',
-          parentName: item.parent_name,
-          phone: item.phone,
+          branch: item.branch || '',
+          parentName: item.parent_name || '',
+          phone: item.phone || '',
           source: item.source as LeadSource,
           status: item.status as LeadStatus,
           notes: item.notes || [], // JSONB column to array
@@ -121,10 +131,6 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
       if (!bError && bData) {
         const branchNames = bData.map(b => b.name).sort((a, b) => a.localeCompare(b, 'tr'));
         setSubBranches(branchNames);
-        // Set first branch as default if not already set
-        if (branchNames.length > 0 && !newLead.branch) {
-          setNewLead(prev => ({ ...prev, branch: branchNames[0] }));
-        }
       }
 
     } catch (err: any) {
@@ -218,8 +224,8 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
       studentName: '',
       parentName: '',
       age: '',
-      branch: subBranches.length > 0 ? subBranches[0] : '',
-      phone: '0',
+      branch: '',
+      phone: '',
       source: 'Instagram',
       initialNote: '',
       followUpDate: new Date().toISOString().split('T')[0]
@@ -228,17 +234,17 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
 
   const handleSaveLead = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canEdit || !newLead.studentName || !newLead.phone) return;
+    if (!canEdit || !newLead.phone.trim() || !newLead.source) return;
     setLoading(true);
 
     try {
       // For teachers and institutions, we prefix the name to clarify in the list
       const commonData = {
-        student_name: newLead.studentName,
+        student_name: newLead.studentName.trim(),
         age: parseInt(newLead.age) || 0,
         branch: newLead.branch,
-        parent_name: newLead.parentName,
-        phone: newLead.phone,
+        parent_name: newLead.parentName.trim(),
+        phone: newLead.phone.trim(),
         source: newLead.source,
         type: 'Öğrenci' as LeadType, // Default to Student as differentiation is removed from UI
         follow_up_date: newLead.followUpDate
@@ -260,7 +266,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
         if (newLead.initialNote.trim()) {
           initialNotes.push({
             id: Date.now().toString(),
-            user: 'Admin', // In real app use actual user
+            user: noteAuthor,
             date: new Date().toLocaleString('tr-TR'),
             content: newLead.initialNote
           });
@@ -341,7 +347,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
       // 2. Create new note object
       const newNote: Note = {
         id: Date.now().toString(),
-        user: 'Admin', // Replace with dynamic user if available
+        user: noteAuthor,
         date: new Date().toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
         content: content
       };
@@ -787,10 +793,10 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">
-                        Öğrenci Adı *
+                        Öğrenci Adı
                       </label>
                       <input
-                        type="text" required
+                        type="text"
                         value={newLead.studentName}
                         onChange={(e) => setNewLead({ ...newLead, studentName: e.target.value })}
                         className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
@@ -820,7 +826,7 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
                         value={newLead.phone}
                         onChange={(e) => {
                           let val = e.target.value.replace(/\D/g, '');
-                          if (!val.startsWith('0')) val = '0' + val;
+                          if (val && !val.startsWith('0')) val = '0' + val;
                           setNewLead({ ...newLead, phone: val.slice(0, 11) });
                         }}
                         className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
@@ -840,26 +846,23 @@ const Leads: React.FC<LeadsProps> = ({ currentUserRole, canEdit = true }) => {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">İlgilendiği Branş *</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">İlgilendiği Branş</label>
                       <select
-                        value={newLead.branch}
-                        onChange={(e) => setNewLead({ ...newLead, branch: e.target.value })}
-                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
+                        multiple
+                        value={selectedBranches}
+                        onChange={handleBranchSelectionChange}
+                        className="w-full min-h-28 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
                       >
-                        {subBranches.length > 0 ? (
-                          subBranches.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
-                          ))
-                        ) : (
-                          BRANCH_OPTIONS.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
-                          ))
-                        )}
+                        {branchOptions.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
                       </select>
+                      <p className="mt-1 text-[10px] text-slate-400">Birden çok seçim için Ctrl / Cmd tuşunu kullanın.</p>
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Data Kaynağı *</label>
                       <select
+                        required
                         value={newLead.source}
                         onChange={(e) => setNewLead({ ...newLead, source: e.target.value as LeadSource })}
                         className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"

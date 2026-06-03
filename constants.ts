@@ -16,7 +16,8 @@ import {
   Settings,
   Shield,
   Music,
-  Layers
+  Layers,
+  DoorOpen
 } from 'lucide-react';
 import { NavItem, UserRole } from './types';
 
@@ -33,6 +34,16 @@ export const PNR_PALETTE = {
   red: '#EF4444',
   slate: '#64748b'
 };
+
+export const DASHBOARD_PERMISSION_ITEMS: NavItem[] = [
+  { id: 'dashboard-student-distribution', title: 'Öğrenci Dağılımı' },
+  { id: 'dashboard-todos', title: 'Görevlerim (To-Do)' },
+  { id: 'dashboard-leads', title: 'Yeni Talepler' },
+  { id: 'dashboard-finance', title: 'Finansal Durum' },
+  { id: 'dashboard-teacher-distribution', title: 'Öğretmen Dağılımı' },
+  { id: 'dashboard-daily-schedule', title: 'Günlük Program' },
+  { id: 'dashboard-recent-students', title: 'Son Kayıtlar' },
+];
 
 export const MENU_ITEMS: NavItem[] = [
   {
@@ -56,6 +67,7 @@ export const MENU_ITEMS: NavItem[] = [
         roles: [UserRole.ADMIN, UserRole.KURUCU, UserRole.MUDUR, UserRole.PERSONEL]
       },
       { id: 'branslar', title: 'Branşlar', path: '/management/branches' },
+      { id: 'derslikler', title: 'Derslikler', path: '/management/classrooms', icon: DoorOpen },
       { id: 'ogretmenler', title: 'Öğretmenler', path: '/management/teachers', icon: Users },
       { id: 'sozlesmeler', title: 'Sözleşmeler', path: '/management/contracts' },
       { id: 'todo', title: 'To-Do', path: '/management/todo', icon: CheckSquare },

@@ -21,6 +21,7 @@ interface BankRecord {
     description: string;
     installment_info?: string;
     is_invoiced?: boolean;
+    notes?: string;
 }
 
 interface CategoryDescription {
@@ -161,9 +162,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
         return match ? Math.max(1, parseInt(match[1], 10) || 1) : 1;
     };
 
-    const getRecordPeriodFromDescription = (description?: string) => {
-        const parts = description ? description.split(' - ').map(part => part.trim()).filter(Boolean) : [];
-        const period = parts[parts.length - 1] || '';
+    const parsePeriodText = (period: string) => {
         const [monthText, yearText] = period.split(/\s+/);
         const monthIndex = MONTH_NAMES.findIndex(month => month.toLocaleLowerCase('tr-TR') === (monthText || '').toLocaleLowerCase('tr-TR'));
         const yearValue = parseInt(yearText || '', 10);
@@ -171,12 +170,35 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
         return monthIndex !== -1 && !isNaN(yearValue) ? { month: monthIndex, year: yearValue } : null;
     };
 
+    const getRecordPeriodFromDescription = (description?: string) => {
+        const parts = description ? description.split(' - ').map(part => part.trim()).filter(Boolean) : [];
+        return parsePeriodText(parts[parts.length - 1] || '');
+    };
+
+    const getRecordMetadata = (record: Pick<BankRecord, 'notes'>) => {
+        try {
+            const metadata = JSON.parse(record.notes || '');
+            return metadata && typeof metadata === 'object'
+                ? metadata as { subCategoryId?: string | null; targetMonth?: number; targetYear?: number }
+                : {};
+        } catch {
+            return {};
+        }
+    };
+
+    const getRecordPeriodFromMetadata = (record: Pick<BankRecord, 'notes'>) => {
+        const metadata = getRecordMetadata(record);
+        return typeof metadata.targetMonth === 'number' && typeof metadata.targetYear === 'number'
+            ? { month: metadata.targetMonth, year: metadata.targetYear }
+            : null;
+    };
+
     const getEffectiveInstallmentDate = (record: BankRecord) => {
         const installmentIndex = getInstallmentIndex(record.installment_info);
         if (!record.installment_info || installmentIndex <= 1) return record.date;
 
         const recordDate = new Date(record.date);
-        const period = getRecordPeriodFromDescription(record.description);
+        const period = getRecordPeriodFromMetadata(record) || getRecordPeriodFromDescription(record.description);
         if (period && recordDate.getMonth() === period.month && recordDate.getFullYear() === period.year) {
             return record.date;
         }
@@ -505,26 +527,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                             }
                         }
 
-                        // 3. Find Description
-                        let desc = '';
-                        if (subCategoryIdx !== -1 && row[subCategoryIdx]) {
-                            const periodText = periodIdx !== -1 && row[periodIdx] ? String(row[periodIdx]).trim() : '';
-                            desc = [String(row[subCategoryIdx]).trim(), periodText].filter(Boolean).join(' - ');
-                        } else if (descIdx !== -1 && row[descIdx]) {
-                            desc = row[descIdx];
-                        } else {
-                            // Fallback: Longest string that isn't date
-                            let maxLength = 0;
-                            row.forEach((cell, i) => {
-                                if (i !== dateCellIndex && typeof cell === 'string' && cell.length > maxLength) {
-                                    // Exclude if it looks like amount (heuristic)
-                                    if (!cell.match(/^[\d.,]+$/)) {
-                                        desc = cell;
-                                        maxLength = cell.length;
-                                    }
-                                }
-                            });
-                        }
+                        const desc = descIdx !== -1 && row[descIdx] ? String(row[descIdx]).trim() : '';
 
                         if (amountFound && amount !== 0) {
                             // Rules: 
@@ -577,7 +580,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                             parsedRows.push({
                                 id: Math.random().toString(36).substr(2, 9),
                                 date: isoDate,
-                                description: desc || 'İçe Aktarılan İşlem',
+                                description: desc,
                                 amount: Math.abs(amount), // Store absolute value
                                 type: type, // Sign determines type
                                 isSelected: true,
@@ -666,7 +669,6 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
 
             selectedRows.forEach(row => {
                 const category = categories.find(c => c.id === row.categoryId);
-                const subCategory = category?.descriptions.find(d => d.id === row.subCategoryId);
                 const catName = category?.title || 'Diğer';
 
                 const totalAmount = row.amount;
@@ -685,15 +687,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                     targetY += Math.floor(targetM / 12);
                     targetM = targetM % 12;
 
-                    const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
-
-                    let finalDesc = row.description || '';
-                    if (subCategory && !finalDesc.includes(subCategory.description)) {
-                        finalDesc += `${finalDesc ? ' - ' : ''}${subCategory.description}`;
-                    }
-                    if (!finalDesc.includes(periodString)) {
-                        finalDesc += `${finalDesc ? ' - ' : ''}${periodString}`;
-                    }
+                    const finalDesc = row.description.trim();
 
                     // Add remainder to the last installment
                     let installmentAmount = baseAmount;
@@ -708,7 +702,8 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                         type: row.type,
                         category_id: row.categoryId,
                         category_name: catName,
-                        installment_info: row.installmentInfo || (installments > 1 ? `${i + 1}/${installments}` : null)
+                        installment_info: row.installmentInfo || (installments > 1 ? `${i + 1}/${installments}` : null),
+                        notes: JSON.stringify({ subCategoryId: row.subCategoryId || null, targetMonth: targetM, targetYear: targetY })
                     });
                 }
             });
@@ -736,8 +731,6 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
         setLoading(true);
         try {
             const cat = categories.find(c => c.id === formData.categoryId);
-            const subCategory = cat?.descriptions.find(d => d.id === formData.subCategoryId);
-
             if (cat && cat.descriptions.length > 0 && !formData.subCategoryId) {
                 alert('Lütfen alt kategori seçiniz.');
                 return;
@@ -761,8 +754,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                     targetY += Math.floor(targetM / 12);
                     targetM = targetM % 12;
 
-                    const periodString = `${MONTH_NAMES[targetM]} ${targetY}`;
-                    const description = `${subCategory?.description || 'Genel'} - ${periodString}`;
+                    const description = '';
                     const amount = i === splitCount - 1 ? baseAmount + remainder : baseAmount;
 
                     splitRows.push({
@@ -772,7 +764,8 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                         category_name: cat?.title || '',
                         amount: Number(amount.toFixed(2)),
                         description,
-                        installment_info: !isBulkPayment && splitCount > 1 ? `${i + 1}/${splitCount}` : null
+                        installment_info: !isBulkPayment && splitCount > 1 ? `${i + 1}/${splitCount}` : null,
+                        notes: JSON.stringify({ subCategoryId: formData.subCategoryId || null, targetMonth: targetM, targetYear: targetY })
                     });
                 }
 
@@ -886,6 +879,12 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
     const getRecordSubCategoryDisplay = (record: BankRecord) => {
         const descriptionParts = getDescriptionParts(record.description);
         const category = getRecordCategory(record);
+        const metadata = getRecordMetadata(record);
+        const metadataSubCategory = metadata.subCategoryId
+            ? category?.descriptions.find(desc => desc.id === metadata.subCategoryId)
+            : undefined;
+        if (metadataSubCategory) return metadataSubCategory.description;
+
         const subCategory = category?.descriptions.find(desc =>
             descriptionParts.some(part => normalizeDottedIForCompare(part) === normalizeDottedIForCompare(desc.description))
         );
@@ -893,15 +892,38 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
         return subCategory?.description || descriptionParts[0] || '';
     };
 
+    const getRecordDescriptionDisplay = (record: BankRecord) => {
+        const category = getRecordCategory(record);
+        const categoryTitles = [record.category_name, category?.title].filter(Boolean) as string[];
+        const subCategoryDescriptions = category?.descriptions.map(desc => desc.description) || [];
+
+        return getDescriptionParts(record.description)
+            .filter(part => {
+                const normalizedPart = normalizeDottedIForCompare(part);
+                const isCategory = categoryTitles.some(title => normalizedPart === normalizeDottedIForCompare(title));
+                const isSubCategory = subCategoryDescriptions.some(description => normalizedPart === normalizeDottedIForCompare(description));
+                return !isCategory && !isSubCategory && !parsePeriodText(part);
+            })
+            .join(' - ');
+    };
+
+    const getRecordPeriodDisplay = (record: BankRecord) => {
+        const period = getRecordPeriodFromMetadata(record) || getRecordPeriodFromDescription(record.description);
+        return period ? `${MONTH_NAMES[period.month]} ${period.year}` : '';
+    };
+
     const getRecordTargetPeriod = (record: BankRecord) => {
+        const metadataPeriod = getRecordPeriodFromMetadata(record);
+        if (metadataPeriod) {
+            return { targetMonth: metadataPeriod.month, targetYear: metadataPeriod.year };
+        }
+
         const descriptionParts = getDescriptionParts(record.description);
         const periodText = descriptionParts[descriptionParts.length - 1] || '';
-        const periodParts = periodText.split(/\s+/);
-        const monthIndex = MONTH_NAMES.findIndex(m => m.toLocaleLowerCase('tr-TR') === (periodParts[0] || '').toLocaleLowerCase('tr-TR'));
-        const yearValue = parseInt(periodParts[1]);
+        const descriptionPeriod = parsePeriodText(periodText);
 
-        if (monthIndex !== -1 && !isNaN(yearValue)) {
-            return { targetMonth: monthIndex, targetYear: yearValue };
+        if (descriptionPeriod) {
+            return { targetMonth: descriptionPeriod.month, targetYear: descriptionPeriod.year };
         }
 
         const recordDate = new Date(record.date);
@@ -968,14 +990,13 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
 
     const handleDownloadExcel = () => {
         const exportRows = displayedRecords.map(record => {
-            const descriptionParts = getDescriptionParts(record.description);
             const subCategoryDisplay = getRecordSubCategoryDisplay(record);
-            const periodDisplay = descriptionParts.length > 1 ? descriptionParts.slice(-1)[0] : '';
+            const periodDisplay = getRecordPeriodDisplay(record);
 
             return {
                 Fatura: isInvoiceEligible(record) ? (record.is_invoiced ? 'Evet' : 'Hayır') : '',
                 Tarih: record.date,
-                Açıklama: record.description || '',
+                Açıklama: getRecordDescriptionDisplay(record),
                 Kategori: record.category_name,
                 'Alt Kategori': subCategoryDisplay,
                 Dönem: periodDisplay,
@@ -1167,7 +1188,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                                             )}
                                         </td>
                                         <td className="p-3 font-mono text-slate-600 dark:text-slate-300">{formatDate(getEffectiveInstallmentDate(record))}</td>
-                                        <td className="p-3 text-slate-700 dark:text-slate-300">{record.description}</td>
+                                        <td className="p-3 text-slate-700 dark:text-slate-300">{getRecordDescriptionDisplay(record)}</td>
                                         <td className="p-3 text-slate-700 dark:text-slate-300">{record.category_name}</td>
                                         <td className="p-3 text-center font-mono text-slate-500">{record.installment_info}</td>
                                         <td className={`p-3 text-right font-bold ${record.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{record.type === 'income' ? '+' : '-'}{formatCurrency(record.amount)}</td>
@@ -1234,9 +1255,8 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                                 {filteredRecords.length > 0 ? (
                                     displayedRecords.map((record, index) => {
                                         const isIncome = record.type === 'income';
-                                        const descriptionParts = getDescriptionParts(record.description);
                                         const subCategoryDisplay = getRecordSubCategoryDisplay(record) || '-';
-                                        const periodDisplay = descriptionParts.length > 1 ? descriptionParts.slice(-1)[0] : '-';
+                                        const periodDisplay = getRecordPeriodDisplay(record) || '-';
                                         const rowBalance = balanceByRecordId.get(record.id) ?? 0;
                                         const currentDateObj = new Date(record.date);
                                         const currentMonth = currentDateObj.getMonth();
@@ -1259,7 +1279,7 @@ const Denizbank: React.FC<DenizbankProps> = ({ canEdit = true }) => {
                                                         {formatDate(record.date)}
                                                     </td>
                                                     <td className="hidden md:table-cell p-2 sm:p-4 text-xs sm:text-sm text-slate-700 dark:text-slate-300 break-words">
-                                                        {record.description || '-'}
+                                                        {getRecordDescriptionDisplay(record)}
                                                     </td>
                                                     <td className="p-2 sm:p-4">
                                                         <span className={`inline-block max-w-full break-words text-[10px] sm:text-xs px-1.5 sm:px-2 py-1 rounded border ${isIncome

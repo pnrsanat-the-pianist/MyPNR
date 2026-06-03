@@ -29,7 +29,9 @@ interface RawClass {
   name: string;
   sub_branch: string;
   schedule_config: { day: string; startTime: string; endTime: string }[];
-  classroom: string;
+  classroom?: string;
+  classroom_id?: string | null;
+  classrooms?: { name?: string } | null;
   teachers?: { name: string };
 }
 
@@ -77,9 +79,21 @@ const Schedule: React.FC<ScheduleProps> = ({ canEdit = true }) => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const { data: classData } = await supabase
+      let classData: any[] = [];
+      const { data: classDataWithClassroom, error: classError } = await supabase
         .from('dance_classes')
-        .select('id, name, sub_branch, schedule_config, classroom, teachers(name)');
+        .select('id, name, sub_branch, schedule_config, classroom_id, classrooms(name), teachers(name)');
+
+      if (classError) {
+        const { data: fallbackClassData, error: fallbackClassError } = await supabase
+          .from('dance_classes')
+          .select('id, name, sub_branch, schedule_config, teachers(name)');
+
+        if (fallbackClassError) throw fallbackClassError;
+        classData = fallbackClassData || [];
+      } else {
+        classData = classDataWithClassroom || [];
+      }
 
       const { data: periodData } = await supabase
         .from('instrument_periods')
@@ -100,7 +114,7 @@ const Schedule: React.FC<ScheduleProps> = ({ canEdit = true }) => {
         .from('calendar_events')
         .select('*');
 
-      setDanceClasses((classData as any) || []);
+      setDanceClasses(classData || []);
       setInstrumentPeriods((periodData || []).map((p: any) => ({
         id: p.id,
         student: p.students,
@@ -165,7 +179,7 @@ const Schedule: React.FC<ScheduleProps> = ({ canEdit = true }) => {
                 startTime: slot.startTime,
                 endTime: slot.endTime || calculateEndTime(slot.startTime),
                 colorClass: 'bg-pnr-purple/10 border-pnr-purple text-pnr-purple',
-                location: cls.classroom || 'Bale Stüdyosu',
+                location: cls.classrooms?.name || cls.classroom || 'Derslik seçilmedi',
                 teacherName: cls.teachers?.name || 'Bilinmiyor'
               });
             }

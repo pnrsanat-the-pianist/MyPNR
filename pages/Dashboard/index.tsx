@@ -9,9 +9,10 @@ import { Eye } from 'lucide-react';
 
 interface DashboardProps {
     currentUserRole: UserRole;
+    permissions: Record<string, { view: boolean; edit: boolean }>;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ currentUserRole }) => {
+const Dashboard: React.FC<DashboardProps> = ({ currentUserRole, permissions }) => {
     const [viewRole, setViewRole] = useState<UserRole>(currentUserRole);
 
     // Update viewRole if prop changes (e.g. re-login)
@@ -25,15 +26,15 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUserRole }) => {
             case UserRole.ADMIN:
             case UserRole.KURUCU:
             case UserRole.MUDUR:
-                return <AdminDashboard />; // Managers also see Admin View for now
+                return <AdminDashboard currentUserRole={viewRole} permissions={permissions} />; // Managers also see Admin View for now
             case UserRole.OGRETMEN:
                 return <TeacherDashboard />;
             case UserRole.VELI:
                 return <StudentDashboard />;
             case UserRole.PERSONEL:
-                return <AdminDashboard />; // Staff usually sees admin-like but restricted? Or new StaffDashboard if needed. Retaining Admin view for now as Staff usually works on leads etc.
+                return <AdminDashboard currentUserRole={viewRole} permissions={permissions} />; // Staff usually sees admin-like but restricted? Or new StaffDashboard if needed. Retaining Admin view for now as Staff usually works on leads etc.
             default:
-                return <AdminDashboard />;
+                return <AdminDashboard currentUserRole={viewRole} permissions={permissions} />;
         }
     };
 

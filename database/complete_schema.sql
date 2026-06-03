@@ -165,11 +165,22 @@ CREATE TABLE IF NOT EXISTS instrument_attendance (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Classrooms
+CREATE TABLE IF NOT EXISTS classrooms (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    allowed_branches TEXT[] NOT NULL DEFAULT '{}',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Dance classes
 CREATE TABLE IF NOT EXISTS dance_classes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
+    classroom_id UUID REFERENCES classrooms(id) ON DELETE SET NULL,
     sub_branch TEXT,
     day_of_week INTEGER CHECK (day_of_week BETWEEN 1 AND 7),
     time_slot TEXT,
@@ -258,6 +269,7 @@ CREATE TABLE IF NOT EXISTS cash_book (
     category_name TEXT,
     type TEXT CHECK (type IN ('income', 'expense')),
     amount DECIMAL(10, 2) NOT NULL,
+    is_invoiced BOOLEAN DEFAULT FALSE,
     notes TEXT,
     created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -273,6 +285,7 @@ CREATE TABLE IF NOT EXISTS denizbank_book (
     category_name TEXT,
     type TEXT CHECK (type IN ('income', 'expense')),
     amount DECIMAL(10, 2) NOT NULL,
+    is_invoiced BOOLEAN DEFAULT FALSE,
     notes TEXT,
     created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -288,6 +301,7 @@ CREATE TABLE IF NOT EXISTS denizbank_pos_book (
     category_name TEXT,
     type TEXT CHECK (type IN ('income', 'expense')),
     amount DECIMAL(10, 2) NOT NULL,
+    is_invoiced BOOLEAN DEFAULT FALSE,
     notes TEXT,
     created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -369,6 +383,11 @@ CREATE INDEX IF NOT EXISTS idx_instrument_attendance_teacher ON instrument_atten
 CREATE INDEX IF NOT EXISTS idx_dance_attendance_date ON dance_attendance(attendance_date);
 CREATE INDEX IF NOT EXISTS idx_dance_attendance_student ON dance_attendance(student_id);
 
+-- Classroom indexes
+CREATE INDEX IF NOT EXISTS idx_classrooms_is_active ON classrooms(is_active);
+CREATE INDEX IF NOT EXISTS idx_classrooms_allowed_branches ON classrooms USING GIN (allowed_branches);
+CREATE INDEX IF NOT EXISTS idx_dance_classes_classroom_id ON dance_classes(classroom_id);
+
 -- Financial indexes
 CREATE INDEX IF NOT EXISTS idx_cash_book_date ON cash_book(date);
 CREATE INDEX IF NOT EXISTS idx_denizbank_book_date ON denizbank_book(date);
@@ -394,6 +413,7 @@ ALTER TABLE students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE instrument_periods ENABLE ROW LEVEL SECURITY;
 ALTER TABLE instrument_lessons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE instrument_attendance ENABLE ROW LEVEL SECURITY;
+ALTER TABLE classrooms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dance_classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dance_enrollments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dance_attendance ENABLE ROW LEVEL SECURITY;
@@ -474,6 +494,11 @@ CREATE POLICY "Manage attendance" ON instrument_attendance FOR ALL USING (
 CREATE POLICY "View dance attendance" ON dance_attendance FOR SELECT USING (true);
 CREATE POLICY "Manage dance attendance" ON dance_attendance FOR ALL USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'teacher'))
+);
+
+CREATE POLICY "View classrooms" ON classrooms FOR SELECT USING (true);
+CREATE POLICY "Manage classrooms" ON classrooms FOR ALL USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
 CREATE POLICY "View leads" ON leads FOR SELECT USING (true);

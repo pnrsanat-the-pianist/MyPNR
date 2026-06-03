@@ -6,7 +6,7 @@ import {
   CheckSquare, Square, Check, Lock
 } from 'lucide-react';
 import { UserRole, NavItem } from '../../types';
-import { MENU_ITEMS } from '../../constants';
+import { DASHBOARD_PERMISSION_ITEMS, MENU_ITEMS } from '../../constants';
 import { supabase } from '../../lib/supabaseClient';
 
 interface PermissionsProps {
@@ -60,9 +60,12 @@ const Permissions: React.FC<PermissionsProps> = ({ currentUserRole }) => {
         id: item.id,
         title: item.title,
         level: level,
-        hasSubItems: !!item.subItems,
+        hasSubItems: !!item.subItems || item.id === 'dashboard',
         parentId: parentId
       });
+      if (item.id === 'dashboard') {
+        flat = [...flat, ...flattenMenu(DASHBOARD_PERMISSION_ITEMS, level + 1, item.id)];
+      }
       if (item.subItems) {
         flat = [...flat, ...flattenMenu(item.subItems, level + 1, item.id)];
       }
@@ -105,11 +108,19 @@ const Permissions: React.FC<PermissionsProps> = ({ currentUserRole }) => {
 
   // Get current permission state for a resource & active role
   const getPermission = (resourceId: string) => {
-    return permissions.find(p => p.role === activeRole && p.resource_key === resourceId) || {
+    const existingPermission = permissions.find(p => p.role === activeRole && p.resource_key === resourceId);
+    if (existingPermission) return existingPermission;
+
+    const resource = resources.find(r => r.id === resourceId);
+    const parentPermission = resource?.parentId
+      ? permissions.find(p => p.role === activeRole && p.resource_key === resource.parentId)
+      : undefined;
+
+    return {
       role: activeRole,
       resource_key: resourceId,
-      can_view: false,
-      can_edit: false
+      can_view: parentPermission?.can_view || false,
+      can_edit: parentPermission?.can_edit || false
     };
   };
 

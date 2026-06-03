@@ -5,6 +5,7 @@ import Sidebar from './components/Layout/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Branches from './pages/Management/Branches';
+import Classrooms from './pages/Management/Classrooms';
 import TeachersHub from './pages/Management/TeachersHub';
 import Contracts from './pages/Management/Contracts';
 import Todo from './pages/Management/Todo';
@@ -206,11 +207,13 @@ const App: React.FC = () => {
     switch (pathBase) {
       // Dashboard is usually open, but checked against 'dashboard' key
       case '/':
-        return renderProtectedPage('dashboard', () => <Dashboard currentUserRole={userRole} />);
+        return renderProtectedPage('dashboard', () => <Dashboard currentUserRole={userRole} permissions={permissions} />);
 
       // Management
       case '/management/branches':
         return renderProtectedPage('branslar', (canEdit) => <Branches canEdit={canEdit} />);
+      case '/management/classrooms':
+        return renderProtectedPage('derslikler', (canEdit) => <Classrooms canEdit={canEdit} />);
       case '/management/teachers':
       case '/management/teachers/candidates':
         return renderProtectedPage('ogretmenler', (canEdit) => <TeachersHub canEdit={canEdit} currentPath={pathBase} />);
@@ -223,7 +226,7 @@ const App: React.FC = () => {
       case '/education/crm':
         return renderProtectedPage('crm', (canEdit) => <CRM canEdit={canEdit} />);
       case '/management/leads':
-        return renderProtectedPage('yeni-talep', (canEdit) => <Leads currentUserRole={userRole} canEdit={canEdit} />);
+        return renderProtectedPage('yeni-talep', (canEdit) => <Leads currentUserRole={userRole} currentUserName={userName} canEdit={canEdit} />);
       case '/education/dance-classes':
         return renderProtectedPage('bale-siniflari', (canEdit) => <DanceClasses canEdit={canEdit} />);
       case '/education/instrument-lessons':
@@ -264,7 +267,7 @@ const App: React.FC = () => {
         return renderProtectedPage('ayarlar', (canEdit) => <Settings canEdit={canEdit} />);
 
       default:
-        return <Dashboard currentUserRole={userRole} />;
+        return <Dashboard currentUserRole={userRole} permissions={permissions} />;
     }
   };
 
