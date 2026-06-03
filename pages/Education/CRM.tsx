@@ -345,6 +345,8 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
     .replace(/ı/g, 'i')
     .replace(/[^a-z0-9]/g, '');
 
+  const normalizeDateForDb = (value?: string | null) => value?.trim() || null;
+
   const getExcelCell = (row: any[], headers: any[], possibleKeys: string[], fallbackIndex: number) => {
     const normalizedKeys = possibleKeys.map(normalizeLookupKey);
     const headerIndex = headers.findIndex(header => normalizedKeys.includes(normalizeLookupKey(header)));
@@ -662,7 +664,7 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
       const commonData = {
         full_name: studentInfo.name,
         tc_no: studentInfo.tc,
-        dob: studentInfo.dob,
+        dob: normalizeDateForDb(studentInfo.dob),
         address: studentInfo.address,
         social_media_approval: studentInfo.socialMediaApproval,
         health_condition: studentInfo.healthCondition,
@@ -690,9 +692,9 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
             main_branch: branch.mainBranch,
             sub_branch: branch.subBranch,
             teacher: branch.teacher,
-            start_date: branch.startDate,
+            start_date: normalizeDateForDb(branch.startDate) || new Date().toISOString().split('T')[0],
             meb_code: branch.mebCode,
-            meb_date: branch.mebDate || null
+            meb_date: normalizeDateForDb(branch.mebDate)
           })
           .eq('id', editingId);
         if (error) throw error;
@@ -705,9 +707,9 @@ const CRM: React.FC<CRMProps> = ({ canEdit }) => {
           main_branch: branch.mainBranch,
           sub_branch: branch.subBranch,
           teacher: branch.teacher,
-          start_date: branch.startDate,
+          start_date: normalizeDateForDb(branch.startDate) || new Date().toISOString().split('T')[0],
           meb_code: branch.mebCode,
-          meb_date: branch.mebDate || null
+          meb_date: normalizeDateForDb(branch.mebDate)
         }));
         const { error } = await supabase.from('students').insert(rowsToInsert);
         if (error) throw error;
