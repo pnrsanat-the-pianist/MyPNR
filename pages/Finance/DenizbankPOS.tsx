@@ -61,6 +61,22 @@ interface ImportedRow {
     isDuplicate?: boolean;
 }
 
+interface PersonSplitRow {
+    id: string;
+    categoryId: string;
+    subCategoryId: string;
+    amount: string;
+}
+
+interface RecordMetadata {
+    subCategoryId?: string | null;
+    targetMonth?: number;
+    targetYear?: number;
+    isPersonSplitParent?: boolean;
+    isPersonSplitChild?: boolean;
+    parentRecordId?: string;
+}
+
 const MONTH_NAMES = [
     'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
     'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
@@ -101,11 +117,15 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         categoryId: '',
         subCategoryId: '',
         amount: '',
+        description: '',
         targetMonth: new Date().getMonth(),
         targetYear: new Date().getFullYear(),
         installments: 1,
         bulkPayments: 1,
-        installmentInfo: ''
+        installmentInfo: '',
+        personSplitEnabled: false,
+        personSplitCount: 2,
+        personSplitRows: [] as PersonSplitRow[]
     });
     const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -117,11 +137,15 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             categoryId: '',
             subCategoryId: '',
             amount: '',
+            description: '',
             targetMonth: today.getMonth(),
             targetYear: today.getFullYear(),
             installments: 1,
             bulkPayments: 1,
-            installmentInfo: ''
+            installmentInfo: '',
+            personSplitEnabled: false,
+            personSplitCount: 2,
+            personSplitRows: []
         });
         setEditingId(null);
     };
@@ -179,12 +203,20 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         try {
             const metadata = JSON.parse(record.notes || '');
             return metadata && typeof metadata === 'object'
-                ? metadata as { subCategoryId?: string | null; targetMonth?: number; targetYear?: number }
+                ? metadata as RecordMetadata
                 : {};
         } catch {
             return {};
         }
     };
+
+    const isPersonSplitParent = (record: Pick<BankRecord, 'notes'>) => getRecordMetadata(record).isPersonSplitParent === true;
+
+    const isPersonSplitChild = (record: Pick<BankRecord, 'notes'>) => getRecordMetadata(record).isPersonSplitChild === true;
+
+    const getPersonSplitParentId = (record: Pick<BankRecord, 'notes'>) => getRecordMetadata(record).parentRecordId || '';
+
+    const signedAmount = (record: Pick<BankRecord, 'type' | 'amount'>) => record.type === 'income' ? record.amount : -record.amount;
 
     const getRecordPeriodFromMetadata = (record: Pick<BankRecord, 'notes'>) => {
         const metadata = getRecordMetadata(record);
@@ -208,7 +240,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
     const isFutureInstallment = (record: BankRecord) => {
         const today = new Date().toISOString().split('T')[0];
-        return !!record.installment_info && getEffectiveInstallmentDate(record) > today;
+        return !isPersonSplitChild(record) && !!record.installment_info && getEffectiveInstallmentDate(record) > today;
     };
 
     const handleCategoryChange = (catId: string) => {
@@ -253,13 +285,14 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             let calculatedOpening = 0;
             const { data: allPrevRecords } = await supabase
                 .from('denizbank_pos_book')
-                .select('amount, type, date, installment_info')
+                .select('amount, type, date, installment_info, notes')
                 .lt('date', startOfYear);
 
             if (allPrevRecords) {
                 calculatedOpening = allPrevRecords.reduce((acc, curr) => {
+                    if (isPersonSplitChild(curr)) return acc;
                     if (curr.installment_info && curr.date > new Date().toISOString().split('T')[0]) return acc;
-                    return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
+                    return acc + signedAmount(curr);
                 }, 0);
             }
             setOpeningBalance(calculatedOpening);
@@ -346,6 +379,56 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     };
 
     const normalizeDuplicateText = (value: string) => value.toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+
+    const buildPersonSplitRows = (count: number, existingRows: PersonSplitRow[] = []) => {
+        const safeCount = Math.max(1, count || 1);
+        const totalAmount = Math.abs(parseTurkishAmount(formData.amount));
+        const baseAmount = totalAmount > 0 ? Math.floor((totalAmount / safeCount) * 100) / 100 : 0;
+        const remainder = totalAmount > 0 ? Number((totalAmount - (baseAmount * safeCount)).toFixed(2)) : 0;
+
+        return Array.from({ length: safeCount }, (_, index) => {
+            const existing = existingRows[index];
+            const amount = index === safeCount - 1 ? baseAmount + remainder : baseAmount;
+
+            return existing || {
+                id: `${Date.now()}-${index}`,
+                categoryId: '',
+                subCategoryId: '',
+                amount: amount > 0 ? Number(amount.toFixed(2)).toString() : ''
+            };
+        });
+    };
+
+    const updatePersonSplitRow = (rowId: string, updates: Partial<PersonSplitRow>) => {
+        setFormData(prev => ({
+            ...prev,
+            personSplitRows: prev.personSplitRows.map(row => row.id === rowId ? { ...row, ...updates } : row)
+        }));
+    };
+
+    const setPersonSplitCount = (count: number) => {
+        const safeCount = Math.max(1, count || 1);
+        setFormData(prev => ({
+            ...prev,
+            personSplitCount: safeCount,
+            personSplitRows: buildPersonSplitRows(safeCount, prev.personSplitRows)
+        }));
+    };
+
+    const togglePersonSplit = () => {
+        setFormData(prev => {
+            const enabled = !prev.personSplitEnabled;
+            return {
+                ...prev,
+                personSplitEnabled: enabled,
+                categoryId: enabled ? '' : prev.categoryId,
+                subCategoryId: enabled ? '' : prev.subCategoryId,
+                installments: enabled ? 1 : prev.installments,
+                bulkPayments: enabled ? 1 : prev.bulkPayments,
+                personSplitRows: enabled ? buildPersonSplitRows(prev.personSplitCount, prev.personSplitRows) : []
+            };
+        });
+    };
 
     const getExpectedImportDate = (row: Pick<ImportedRow, 'date' | 'targetMonth' | 'targetYear'>) => {
         const transDay = new Date(row.date).getDate();
@@ -609,6 +692,11 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
     const applyBulkCategory = () => {
         if (!bulkCategory) return;
+        const bulkCat = categories.find(c => c.id === bulkCategory);
+        if (bulkCat && bulkCat.descriptions.length > 0 && !bulkSubCategory) {
+            alert('Lütfen alt kategori seçiniz.');
+            return;
+        }
         setImportedRows(prev => prev.map(r => r.isSelected ? { ...r, categoryId: bulkCategory, subCategoryId: bulkSubCategory } : r));
     };
 
@@ -621,17 +709,18 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         const selectedRows = importedRows.filter(r => r.isSelected && !r.isDuplicate);
         if (selectedRows.length === 0) return;
 
-        const invalidRows = selectedRows.filter(r => {
-            if (!r.categoryId) return true;
-            const cat = categories.find(c => c.id === r.categoryId);
-            if (cat && cat.descriptions.length > 0 && !r.subCategoryId) {
-                return true;
-            }
-            return false;
-        });
+        const missingCategory = selectedRows.filter(r => !r.categoryId);
+        if (missingCategory.length > 0) {
+            alert(`Lütfen işaretli ${missingCategory.length} satırdaki kategoriyi seçiniz.`);
+            return;
+        }
 
-        if (invalidRows.length > 0) {
-            alert(`Lütfen işaretli ${invalidRows.length} satırdaki eksik bilgileri doldurunuz.`);
+        const missingSubCategory = selectedRows.filter(r => {
+            const cat = categories.find(c => c.id === r.categoryId);
+            return cat && cat.descriptions.length > 0 && !r.subCategoryId;
+        });
+        if (missingSubCategory.length > 0) {
+            alert(`Lütfen işaretli ${missingSubCategory.length} satırdaki alt kategoriyi seçiniz.`);
             return;
         }
 
@@ -694,14 +783,36 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     // --- Manual Add Handlers ---
     const handleManualSave = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!canEdit || !formData.amount || !formData.categoryId) return;
+        if (!canEdit || !formData.amount || (!formData.personSplitEnabled && !formData.categoryId)) return;
 
         setLoading(true);
         try {
             const cat = categories.find(c => c.id === formData.categoryId);
-            if (cat && cat.descriptions.length > 0 && !formData.subCategoryId) {
+            if (!formData.personSplitEnabled && cat && cat.descriptions.length > 0 && !formData.subCategoryId) {
                 alert('Lütfen alt kategori seçiniz.');
                 return;
+            }
+
+            if (formData.personSplitEnabled) {
+                const invalidSplitRows = formData.personSplitRows.filter(row => {
+                    const rowCategory = categories.find(c => c.id === row.categoryId);
+                    return !row.categoryId
+                        || !row.amount
+                        || parseTurkishAmount(row.amount) <= 0
+                        || (rowCategory && rowCategory.descriptions.length > 0 && !row.subCategoryId);
+                });
+
+                if (invalidSplitRows.length > 0) {
+                    alert('Lütfen kişi satırlarında kategori, alt kategori ve tutar alanlarını doldurunuz.');
+                    return;
+                }
+
+                const splitTotal = formData.personSplitRows.reduce((acc, row) => acc + Math.abs(parseTurkishAmount(row.amount)), 0);
+                const expectedTotal = Math.abs(parseTurkishAmount(formData.amount));
+                if (Math.abs(splitTotal - expectedTotal) > 0.01) {
+                    alert(`Kişilere bölünen toplam (${formatCurrency(splitTotal)}) ana tutarla (${formatCurrency(expectedTotal)}) aynı olmalıdır.`);
+                    return;
+                }
             }
 
             const totalAmount = Math.abs(parseTurkishAmount(formData.amount));
@@ -722,7 +833,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                     targetY += Math.floor(targetM / 12);
                     targetM = targetM % 12;
 
-                    const description = '';
+                    const description = formData.description;
                     const amount = i === splitCount - 1 ? baseAmount + remainder : baseAmount;
 
                     splitRows.push({
@@ -740,7 +851,75 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                 return splitRows;
             };
 
-            if (editingId) {
+            const buildPersonSplitChildRows = (parentRecordId: string) => formData.personSplitRows.map(row => {
+                const rowCategory = categories.find(c => c.id === row.categoryId);
+
+                return {
+                    date: formData.date,
+                    type: formData.type,
+                    category_id: row.categoryId,
+                    category_name: rowCategory?.title || '',
+                    amount: Number(Math.abs(parseTurkishAmount(row.amount)).toFixed(2)),
+                    description: formData.description,
+                    installment_info: null,
+                    notes: JSON.stringify({
+                        subCategoryId: row.subCategoryId || null,
+                        targetMonth: formData.targetMonth,
+                        targetYear: formData.targetYear,
+                        isPersonSplitChild: true,
+                        parentRecordId
+                    })
+                };
+            });
+
+            const deletePersonSplitChildren = async (parentRecordId: string) => {
+                const childIds = records.filter(record => getPersonSplitParentId(record) === parentRecordId).map(record => record.id);
+                if (childIds.length === 0) return;
+
+                const { error } = await supabase.from('denizbank_pos_book').delete().in('id', childIds);
+                if (error) throw error;
+            };
+
+            if (formData.personSplitEnabled) {
+                const parentRow = {
+                    date: formData.date,
+                    type: formData.type,
+                    category_id: null,
+                    category_name: '',
+                    amount: Number(totalAmount.toFixed(2)),
+                    description: formData.description,
+                    installment_info: null,
+                    notes: JSON.stringify({
+                        targetMonth: formData.targetMonth,
+                        targetYear: formData.targetYear,
+                        isPersonSplitParent: true
+                    })
+                };
+
+                if (editingId) {
+                    const { error: updateError } = await supabase
+                        .from('denizbank_pos_book')
+                        .update(parentRow)
+                        .eq('id', editingId);
+                    if (updateError) throw updateError;
+
+                    await deletePersonSplitChildren(editingId);
+                    const { error: insertError } = await supabase.from('denizbank_pos_book').insert(buildPersonSplitChildRows(editingId));
+                    if (insertError) throw insertError;
+                } else {
+                    const { data: insertedParent, error: parentError } = await supabase
+                        .from('denizbank_pos_book')
+                        .insert(parentRow)
+                        .select('id')
+                        .single();
+                    if (parentError) throw parentError;
+
+                    const { error: insertError } = await supabase.from('denizbank_pos_book').insert(buildPersonSplitChildRows(insertedParent.id));
+                    if (insertError) throw insertError;
+                }
+            } else if (editingId) {
+                await deletePersonSplitChildren(editingId);
+
                 const [firstRow, ...extraRows] = buildSplitRows();
                 const { error: updateError } = await supabase
                     .from('denizbank_pos_book')
@@ -773,12 +952,13 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     const handleDelete = async (id: string) => {
         if (!canEdit || !confirm("Bu kaydı silmek istediğinize emin misiniz?")) return;
         try {
-            const { error } = await supabase.from('denizbank_pos_book').delete().eq('id', id);
+            const idsToDelete = [id, ...records.filter(record => getPersonSplitParentId(record) === id).map(record => record.id)];
+            const { error } = await supabase.from('denizbank_pos_book').delete().in('id', idsToDelete);
             if (error) throw error;
-            setRecords(prev => prev.filter(r => r.id !== id));
+            setRecords(prev => prev.filter(r => !idsToDelete.includes(r.id)));
             setSelectedIds(prev => {
                 const next = new Set(prev);
-                next.delete(id);
+                idsToDelete.forEach(recordId => next.delete(recordId));
                 return next;
             });
         } catch (err: any) {
@@ -787,14 +967,17 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     };
 
     const toggleSelectAll = () => {
-        if (selectedIds.size === filteredRecords.length && filteredRecords.length > 0) {
+        if (selectedIds.size === selectableRecords.length && selectableRecords.length > 0) {
             setSelectedIds(new Set());
         } else {
-            setSelectedIds(new Set(filteredRecords.map(r => r.id)));
+            setSelectedIds(new Set(selectableRecords.map(r => r.id)));
         }
     };
 
     const toggleSelectRecord = (id: string) => {
+        const record = records.find(item => item.id === id);
+        if (record && isPersonSplitChild(record)) return;
+
         const newSelected = new Set(selectedIds);
         if (newSelected.has(id)) {
             newSelected.delete(id);
@@ -810,10 +993,13 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
         setLoading(true);
         try {
-            const ids = Array.from(selectedIds);
+            const ids = Array.from(new Set(Array.from(selectedIds).flatMap(id => [
+                id,
+                ...records.filter(record => getPersonSplitParentId(record) === id).map(record => record.id)
+            ])));
             const { error } = await supabase.from('denizbank_pos_book').delete().in('id', ids);
             if (error) throw error;
-            setRecords(prev => prev.filter(r => !selectedIds.has(r.id)));
+            setRecords(prev => prev.filter(r => !ids.includes(r.id)));
             setSelectedIds(new Set());
         } catch (err: any) {
             alert("Toplu silme hatası: " + err.message);
@@ -825,15 +1011,33 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     // Stats
     const futureInstallmentRecords = records.filter(isFutureInstallment);
     const settledRecords = records.filter(record => !isFutureInstallment(record));
-    const futureInstallmentTotal = futureInstallmentRecords.reduce((acc, record) => acc + (record.type === 'income' ? record.amount : -record.amount), 0);
-    const totalIncome = settledRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
-    const totalExpense = settledRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
+    const balanceRecords = settledRecords.filter(record => !isPersonSplitChild(record));
+    const futureInstallmentTotal = futureInstallmentRecords.reduce((acc, record) => acc + signedAmount(record), 0);
+    const totalIncome = balanceRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
+    const totalExpense = balanceRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
     const balance = openingBalance + totalIncome - totalExpense;
 
-    const filteredRecords = settledRecords.filter(r =>
-        r.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.category_name.toLowerCase().includes(searchTerm.toLowerCase())
+    const filteredRecords = settledRecords.filter(r => {
+        const normalizedSearch = searchTerm.toLowerCase();
+        return r.description.toLowerCase().includes(normalizedSearch) ||
+            r.category_name.toLowerCase().includes(normalizedSearch);
+    }
     );
+
+    const filteredRecordIds = new Set(filteredRecords.map(record => record.id));
+    const matchedChildParentIds = new Set(filteredRecords.filter(isPersonSplitChild).map(getPersonSplitParentId));
+    const splitChildrenByParentId = settledRecords
+        .filter(isPersonSplitChild)
+        .reduce((acc, child) => {
+            const parentId = getPersonSplitParentId(child);
+            if (!parentId) return acc;
+            acc.set(parentId, [...(acc.get(parentId) || []), child]);
+            return acc;
+        }, new Map<string, BankRecord[]>());
+    const topLevelFilteredRecords = settledRecords.filter(record =>
+        !isPersonSplitChild(record) && (filteredRecordIds.has(record.id) || matchedChildParentIds.has(record.id))
+    );
+    const selectableRecords = topLevelFilteredRecords;
 
     const selectedCategory = categories.find(c => c.id === formData.categoryId);
 
@@ -845,6 +1049,8 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         || categories.find(c => normalizeDottedIForCompare(c.title) === normalizeDottedIForCompare(record.category_name));
 
     const getRecordSubCategoryDisplay = (record: BankRecord) => {
+        if (isPersonSplitParent(record)) return '';
+
         const descriptionParts = getDescriptionParts(record.description);
         const category = getRecordCategory(record);
         const metadata = getRecordMetadata(record);
@@ -860,20 +1066,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
         return subCategory?.description || descriptionParts[0] || '';
     };
 
-    const getRecordDescriptionDisplay = (record: BankRecord) => {
-        const category = getRecordCategory(record);
-        const categoryTitles = [record.category_name, category?.title].filter(Boolean) as string[];
-        const subCategoryDescriptions = category?.descriptions.map(desc => desc.description) || [];
-
-        return getDescriptionParts(record.description)
-            .filter(part => {
-                const normalizedPart = normalizeDottedIForCompare(part);
-                const isCategory = categoryTitles.some(title => normalizedPart === normalizeDottedIForCompare(title));
-                const isSubCategory = subCategoryDescriptions.some(description => normalizedPart === normalizeDottedIForCompare(description));
-                return !isCategory && !isSubCategory && !parsePeriodText(part);
-            })
-            .join(' - ');
-    };
+    const getRecordDescriptionDisplay = (record: BankRecord) => record.description || '';
 
     const getRecordPeriodDisplay = (record: BankRecord) => {
         const period = getRecordPeriodFromMetadata(record) || getRecordPeriodFromDescription(record.description);
@@ -902,7 +1095,10 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     };
 
     const isInvoiceEligible = (record: BankRecord) =>
-        record.type === 'income'
+        !isPersonSplitParent(record)
+        && !isPersonSplitChild(record)
+        && record.type === 'income'
+        && !!record.category_name
         && normalizeDottedIForCompare(record.category_name).toLocaleLowerCase('tr-TR') !== normalizeDottedIForCompare('Hesaplar Arası').toLocaleLowerCase('tr-TR')
         && normalizeDottedIForCompare(getRecordSubCategoryDisplay(record)).toLocaleLowerCase('tr-TR') !== normalizeDottedIForCompare('Hesaplar Arası').toLocaleLowerCase('tr-TR');
 
@@ -923,11 +1119,25 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
     };
 
     const handleEdit = (record: BankRecord) => {
-        if (!canEdit) return;
+        if (!canEdit || isPersonSplitChild(record)) return;
         const category = getRecordCategory(record);
         const subCategoryDisplay = getRecordSubCategoryDisplay(record);
         const subCategory = category?.descriptions.find(desc => normalizeDottedIForCompare(desc.description) === normalizeDottedIForCompare(subCategoryDisplay));
         const { targetMonth, targetYear } = getRecordTargetPeriod(record);
+        const personSplitRows = records
+            .filter(item => getPersonSplitParentId(item) === record.id)
+            .map(item => {
+                const itemCategory = getRecordCategory(item);
+                const itemSubCategoryDisplay = getRecordSubCategoryDisplay(item);
+                const itemSubCategory = itemCategory?.descriptions.find(desc => normalizeDottedIForCompare(desc.description) === normalizeDottedIForCompare(itemSubCategoryDisplay));
+
+                return {
+                    id: item.id,
+                    categoryId: item.category_id || itemCategory?.id || '',
+                    subCategoryId: itemSubCategory?.id || '',
+                    amount: item.amount.toString()
+                };
+            });
 
         setFormData({
             date: record.date,
@@ -935,24 +1145,30 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             categoryId: record.category_id || category?.id || '',
             subCategoryId: subCategory?.id || '',
             amount: record.amount.toString(),
+            description: record.description || '',
             targetMonth,
             targetYear,
             installments: 1,
             bulkPayments: 1,
-            installmentInfo: record.installment_info || ''
+            installmentInfo: record.installment_info || '',
+            personSplitEnabled: isPersonSplitParent(record) || personSplitRows.length > 0,
+            personSplitCount: Math.max(2, personSplitRows.length || 2),
+            personSplitRows
         });
         setEditingId(record.id);
         setIsManualModalOpen(true);
     };
 
-    const displayedRecords = [...filteredRecords]
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const displayedRecords = [...topLevelFilteredRecords]
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .flatMap(record => [record, ...(splitChildrenByParentId.get(record.id) || [])]);
 
     let runningBalance = openingBalance;
     const balanceByRecordId = new Map<string, number>();
     for (let i = displayedRecords.length - 1; i >= 0; i--) {
         const record = displayedRecords[i];
-        runningBalance += record.type === 'income' ? record.amount : -record.amount;
+        if (isPersonSplitChild(record)) continue;
+        runningBalance += signedAmount(record);
         balanceByRecordId.set(record.id, runningBalance);
     }
 
@@ -1156,7 +1372,9 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                             )}
                                         </td>
                                         <td className="p-3 font-mono text-slate-600 dark:text-slate-300">{formatDate(getEffectiveInstallmentDate(record))}</td>
-                                        <td className="p-3 text-slate-700 dark:text-slate-300">{getRecordDescriptionDisplay(record)}</td>
+                                        <td className="finance-description-cell p-3 text-slate-700 dark:text-slate-300 w-64 max-w-64" data-tooltip={getRecordDescriptionDisplay(record)} title={getRecordDescriptionDisplay(record)}>
+                                            <span className="finance-description-text">{getRecordDescriptionDisplay(record)}</span>
+                                        </td>
                                         <td className="p-3 text-slate-700 dark:text-slate-300">{record.category_name}</td>
                                         <td className="p-3 text-center font-mono text-slate-500">{record.installment_info}</td>
                                         <td className={`p-3 text-right font-bold ${record.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{record.type === 'income' ? '+' : '-'}{formatCurrency(record.amount)}</td>
@@ -1194,7 +1412,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                         <input
                                             type="checkbox"
                                             className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
-                                            checked={selectedIds.size === filteredRecords.length && filteredRecords.length > 0}
+                                            checked={selectedIds.size === selectableRecords.length && selectableRecords.length > 0}
                                             onChange={toggleSelectAll}
                                         />
                                     </th>
@@ -1220,11 +1438,14 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                     <td className="p-2 sm:p-4"></td>
                                 </tr>
 
-                                {filteredRecords.length > 0 ? (
+                                {displayedRecords.length > 0 ? (
                                     displayedRecords.map((record, index) => {
                                         const isIncome = record.type === 'income';
+                                        const isSplitParent = isPersonSplitParent(record);
+                                        const isSplitChild = isPersonSplitChild(record);
                                         const subCategoryDisplay = getRecordSubCategoryDisplay(record) || '-';
                                         const periodDisplay = getRecordPeriodDisplay(record) || '-';
+                                        const descriptionDisplay = getRecordDescriptionDisplay(record);
                                         const rowBalance = balanceByRecordId.get(record.id) ?? 0;
                                         const currentDateObj = new Date(record.date);
                                         const currentMonth = currentDateObj.getMonth();
@@ -1234,31 +1455,33 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
 
                                         return (
                                             <React.Fragment key={record.id}>
-                                                <tr className={`transition-colors ${selectedIds.has(record.id) ? 'bg-blue-50/50 dark:bg-blue-900/10' : isLatestMonthRow ? 'bg-slate-100 dark:bg-slate-800/70 border-l-4 border-l-slate-400 dark:border-l-slate-500' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
+                                                <tr className={`transition-colors ${isSplitChild ? 'bg-violet-50/70 dark:bg-violet-950/20 border-l-4 border-l-violet-300 dark:border-l-violet-700' : selectedIds.has(record.id) ? 'bg-blue-50/50 dark:bg-blue-900/10' : isLatestMonthRow ? 'bg-slate-100 dark:bg-slate-800/70 border-l-4 border-l-slate-400 dark:border-l-slate-500' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
                                                     <td className="p-2 sm:p-4">
-                                                        <input
-                                                            type="checkbox"
-                                                            className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
-                                                            checked={selectedIds.has(record.id)}
-                                                            onChange={() => toggleSelectRecord(record.id)}
-                                                        />
+                                                        {!isSplitChild && (
+                                                            <input
+                                                                type="checkbox"
+                                                                className="w-4 h-4 rounded border-slate-300 text-pnr-purple focus:ring-pnr-purple"
+                                                                checked={selectedIds.has(record.id)}
+                                                                onChange={() => toggleSelectRecord(record.id)}
+                                                            />
+                                                        )}
                                                     </td>
                                                     <td className="p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-300 font-mono break-words">
                                                         {formatDate(record.date)}
                                                     </td>
-                                                    <td className="hidden md:table-cell p-2 sm:p-4 text-xs sm:text-sm text-slate-700 dark:text-slate-300 break-words">
-                                                        {getRecordDescriptionDisplay(record)}
+                                                    <td className="finance-description-cell hidden md:table-cell p-2 sm:p-4 text-slate-700 dark:text-slate-300" data-tooltip={descriptionDisplay} title={descriptionDisplay}>
+                                                        <span className="finance-description-text">{descriptionDisplay}</span>
                                                     </td>
                                                     <td className="p-2 sm:p-4">
                                                         <span className={`inline-block max-w-full break-words text-[10px] sm:text-xs px-1.5 sm:px-2 py-1 rounded border ${isIncome
                                                             ? 'bg-green-50 text-green-700 border-green-200'
                                                             : 'bg-red-50 text-red-700 border-red-200'
                                                             }`}>
-                                                            {record.category_name}
+                                                            {isSplitParent ? '-' : record.category_name}
                                                         </span>
                                                     </td>
                                                     <td className="p-2 sm:p-4 text-xs sm:text-sm font-medium text-slate-900 dark:text-white break-words">
-                                                        {subCategoryDisplay}
+                                                        {isSplitParent ? '-' : subCategoryDisplay}
                                                     </td>
                                                     <td className="hidden md:table-cell p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-400 break-words">
                                                         {periodDisplay}
@@ -1270,7 +1493,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                                         {isIncome ? '+' : '-'}{formatCurrency(record.amount)}
                                                     </td>
                                                     <td className="hidden md:table-cell p-2 sm:p-4 text-right font-mono text-xs sm:text-sm font-extrabold text-slate-900 dark:text-white">
-                                                        {formatCurrency(rowBalance)}
+                                                        {isSplitChild ? '-' : formatCurrency(rowBalance)}
                                                     </td>
                                                     <td className="p-2 sm:p-4 text-center">
                                                         {isInvoiceEligible(record) ? (
@@ -1285,7 +1508,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                                         ) : null}
                                                     </td>
                                                     <td className="p-2 sm:p-4 text-center">
-                                                        {canEdit && (
+                                                        {canEdit && !isSplitChild && (
                                                             <div className="flex items-center justify-center gap-1">
                                                                 <button
                                                                     onClick={() => handleEdit(record)}
@@ -1348,9 +1571,17 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                 </select>
                             </div>
                             <div className="w-64">
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Seçililere Alt Kategori Ata</label>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                                    Seçililere Alt Kategori Ata
+                                    {(categories.find(c => c.id === bulkCategory)?.descriptions?.length || 0) > 0 && (
+                                        <span className="text-red-500 ml-1">*</span>
+                                    )}
+                                </label>
                                 <select
-                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs dark:text-white"
+                                    className={`w-full bg-white dark:bg-slate-800 border rounded-lg p-2 text-xs dark:text-white ${(categories.find(c => c.id === bulkCategory)?.descriptions?.length || 0) > 0 && !bulkSubCategory
+                                        ? 'border-red-500 bg-red-50 dark:bg-red-900/10'
+                                        : 'border-slate-200 dark:border-slate-700'
+                                        }`}
                                     value={bulkSubCategory}
                                     onChange={(e) => setBulkSubCategory(e.target.value)}
                                     disabled={!bulkCategory}
@@ -1541,7 +1772,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
             {/* MANUAL ADD MODAL */}
             {isManualModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-pnr-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
+                    <div className="bg-white dark:bg-pnr-card w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 animate-in zoom-in-95">
                         <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
                             <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
                                 <CreditCard size={20} className="text-pnr-purple" /> {editingId ? 'Denizbank POS Kaydını Düzenle' : 'Yeni Denizbank POS Kaydı'}
@@ -1552,14 +1783,14 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                             <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
                                 <button
                                     type="button"
-                                    onClick={() => setFormData({ ...formData, type: 'income', categoryId: '', subCategoryId: '' })}
+                                    onClick={() => setFormData({ ...formData, type: 'income', categoryId: '', subCategoryId: '', personSplitRows: formData.personSplitRows.map(row => ({ ...row, categoryId: '', subCategoryId: '' })) })}
                                     className={`py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${formData.type === 'income' ? 'bg-white dark:bg-slate-700 text-green-600 shadow-sm' : 'text-slate-500'}`}
                                 >
                                     <TrendingUp size={16} /> Gelir
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setFormData({ ...formData, type: 'expense', categoryId: '', subCategoryId: '' })}
+                                    onClick={() => setFormData({ ...formData, type: 'expense', categoryId: '', subCategoryId: '', personSplitRows: formData.personSplitRows.map(row => ({ ...row, categoryId: '', subCategoryId: '' })) })}
                                     className={`py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${formData.type === 'expense' ? 'bg-white dark:bg-slate-700 text-red-600 shadow-sm' : 'text-slate-500'}`}
                                 >
                                     <TrendingDown size={16} /> Gider
@@ -1606,24 +1837,26 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                                    {formData.type === 'income' ? 'Gelir Kategorisi' : 'Gider Kategorisi'}
-                                </label>
-                                <select
-                                    required
-                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
-                                    value={formData.categoryId}
-                                    onChange={(e) => handleCategoryChange(e.target.value)}
-                                >
-                                    <option value="">Seçiniz</option>
-                                    {categories.filter(c => c.type === formData.type).map(c => (
-                                        <option key={c.id} value={c.id}>{c.title}</option>
-                                    ))}
-                                </select>
-                            </div>
+                            {!formData.personSplitEnabled && (
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                                        {formData.type === 'income' ? 'Gelir Kategorisi' : 'Gider Kategorisi'}
+                                    </label>
+                                    <select
+                                        required
+                                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white"
+                                        value={formData.categoryId}
+                                        onChange={(e) => handleCategoryChange(e.target.value)}
+                                    >
+                                        <option value="">Seçiniz</option>
+                                        {categories.filter(c => c.type === formData.type).map(c => (
+                                            <option key={c.id} value={c.id}>{c.title}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
 
-                            {selectedCategory && selectedCategory.descriptions.length > 0 && (
+                            {!formData.personSplitEnabled && selectedCategory && selectedCategory.descriptions.length > 0 && (
                                 <div className="animate-in slide-in-from-top-1">
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
                                         <Tag size={12} /> Alt Kategori
@@ -1649,6 +1882,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                         <input
                                             type="number"
                                             min="1"
+                                            disabled={formData.personSplitEnabled}
                                             className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
                                             value={formData.installments || ''}
                                             onChange={(e) => {
@@ -1668,6 +1902,7 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                         <input
                                             type="number"
                                             min="1"
+                                            disabled={formData.personSplitEnabled}
                                             className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm dark:text-white focus:ring-2 focus:ring-pnr-purple focus:outline-none"
                                             value={formData.bulkPayments || ''}
                                             onChange={(e) => {
@@ -1701,6 +1936,86 @@ const DenizbankPOS: React.FC<DenizbankPOSProps> = ({ canEdit = true }) => {
                                     {formData.bulkPayments > 1 ? 'Dönem Payı' : 'Aylık Ödeme'}: {formatCurrency(parseTurkishAmount(formData.amount) / (formData.bulkPayments > 1 ? formData.bulkPayments : formData.installments))}
                                 </p>
                             )}
+
+                            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40 p-3 space-y-3">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-bold text-slate-700 dark:text-slate-200">Kişilere Böl</div>
+                                        <div className="text-xs text-slate-500">Ana satır bakiyede kalır, kişi satırları sadece dağılım olarak görünür.</div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={togglePersonSplit}
+                                        className={`px-3 py-2 rounded-lg text-xs font-bold transition-colors ${formData.personSplitEnabled ? 'bg-pnr-purple text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}
+                                    >
+                                        {formData.personSplitEnabled ? 'Bölme Açık' : 'Kişilere Böl'}
+                                    </button>
+                                </div>
+
+                                {formData.personSplitEnabled && (
+                                    <div className="space-y-3">
+                                        <div className="w-32">
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Kişi Sayısı</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="20"
+                                                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-sm dark:text-white"
+                                                value={formData.personSplitCount || ''}
+                                                onChange={(e) => setPersonSplitCount(parseInt(e.target.value) || 1)}
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            {formData.personSplitRows.map((row, index) => {
+                                                const rowCategory = categories.find(c => c.id === row.categoryId);
+
+                                                return (
+                                                    <div key={row.id} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_120px] gap-2 rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-900/60 p-2">
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-violet-500 uppercase mb-1">{index + 1}. Kategori</label>
+                                                            <select
+                                                                required
+                                                                className="w-full bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-800 rounded p-2 text-xs dark:text-white"
+                                                                value={row.categoryId}
+                                                                onChange={(e) => updatePersonSplitRow(row.id, { categoryId: e.target.value, subCategoryId: '' })}
+                                                            >
+                                                                <option value="">Seçiniz</option>
+                                                                {categories.filter(c => c.type === formData.type).map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-violet-500 uppercase mb-1">Alt Kategori</label>
+                                                            <select
+                                                                required={!!rowCategory?.descriptions.length}
+                                                                disabled={!row.categoryId || !rowCategory?.descriptions.length}
+                                                                className="w-full bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-800 rounded p-2 text-xs dark:text-white disabled:opacity-60"
+                                                                value={row.subCategoryId}
+                                                                onChange={(e) => updatePersonSplitRow(row.id, { subCategoryId: e.target.value })}
+                                                            >
+                                                                <option value="">Alt Kategori</option>
+                                                                {rowCategory?.descriptions.map(desc => <option key={desc.id} value={desc.id}>{desc.description}</option>)}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-violet-500 uppercase mb-1">Ödeme</label>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                step="0.01"
+                                                                required
+                                                                className="w-full bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-800 rounded p-2 text-xs font-bold text-right dark:text-white"
+                                                                value={row.amount}
+                                                                onChange={(e) => updatePersonSplitRow(row.id, { amount: e.target.value })}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
 
                             <button
                                 type="submit"

@@ -342,8 +342,11 @@ const FinanceCategories: React.FC<FinanceCategoriesProps> = ({ canEdit = true })
     }
   };
 
-  const incomeCategories = categories.filter(c => c.type === 'income');
-  const expenseCategories = categories.filter(c => c.type === 'expense');
+  const sortCategoriesByTitle = (items: CategoryItem[]) =>
+    [...items].sort((a, b) => a.title.localeCompare(b.title, 'tr', { sensitivity: 'base' }));
+
+  const incomeCategories = sortCategoriesByTitle(categories.filter(c => c.type === 'income'));
+  const expenseCategories = sortCategoriesByTitle(categories.filter(c => c.type === 'expense'));
 
   return (
     <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6 h-[calc(100vh-100px)] flex flex-col">
