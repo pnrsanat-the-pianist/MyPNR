@@ -589,7 +589,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                         type,
                         amount,
                         description: effectiveSubCategory || fullDescription || 'Genel',
-                        isSelected: true,
+                        isSelected: targetYear === currentDate.getFullYear(),
                         categoryId: category?.id || '',
                         subCategoryId: matchedSubCategory?.id || '',
                         subCategoryText: effectiveSubCategory || undefined,
@@ -630,7 +630,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
     };
 
     const toggleImportRowSelection = (id: string) => {
-        setImportedRows(prev => prev.map(row => row.id === id ? { ...row, isSelected: !row.isSelected } : row));
+        setImportedRows(prev => prev.map(row => row.id === id && row.targetYear === currentDate.getFullYear() ? { ...row, isSelected: !row.isSelected } : row));
     };
 
     const confirmImport = async () => {
@@ -898,6 +898,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                     <th className="p-3 w-10"></th>
                                     <th className="p-3">Tarih</th>
                                     <th className="p-3">Kategori</th>
+                                    <th className="p-3">Alt Kategori</th>
                                     <th className="p-3">Açıklama</th>
                                     <th className="p-3 text-center">Taksit</th>
                                     <th className="p-3 text-right">Tutar</th>
@@ -905,7 +906,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                 {futureInstallmentRecords.length === 0 ? (
-                                    <tr><td colSpan={6} className="p-6 text-center text-slate-400">Gelecek taksit bulunmuyor.</td></tr>
+                                    <tr><td colSpan={7} className="p-6 text-center text-slate-400">Gelecek taksit bulunmuyor.</td></tr>
                                 ) : [...futureInstallmentRecords].sort(compareRecordsForBalance).map(record => (
                                     <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
                                         <td className="p-3 text-center">
@@ -920,7 +921,10 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                         </td>
                                         <td className="p-3 font-mono text-slate-600 dark:text-slate-300">{formatDate(getEffectiveInstallmentDate(record))}</td>
                                         <td className="p-3 text-slate-700 dark:text-slate-300">{record.category_name}</td>
-                                        <td className="p-3 text-slate-700 dark:text-slate-300">{record.description}</td>
+                                        <td className="p-3 text-slate-700 dark:text-slate-300">{parseDescriptionParts(record.description).subCategory === '-' ? '' : parseDescriptionParts(record.description).subCategory}</td>
+                                        <td className="finance-description-cell p-3 text-slate-700 dark:text-slate-300 w-40 max-w-40" data-tooltip={record.description} title={record.description}>
+                                            <span className="finance-description-text">{record.description}</span>
+                                        </td>
                                         <td className="p-3 text-center font-mono text-slate-500">{record.installment_info}</td>
                                         <td className={`p-3 text-right font-bold ${record.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{record.type === 'income' ? '+' : '-'}{formatCurrency(record.amount)}</td>
                                     </tr>
@@ -1026,7 +1030,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                                     </span>
                                                 </td>
                                                 <td className="p-2 sm:p-4 text-xs sm:text-sm font-medium text-slate-900 dark:text-white break-words">
-                                                    {subCategoryDisplay}
+                                                    {subCategoryDisplay === '-' ? '' : subCategoryDisplay}
                                                 </td>
                                                 <td className="hidden md:table-cell p-2 sm:p-4 text-xs sm:text-sm text-slate-600 dark:text-slate-400 break-words">
                                                     {periodDisplay}
@@ -1145,11 +1149,12 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                         <th className="p-3 w-10 text-center">
                                             <button
                                                 onClick={() => {
-                                                    const allSelected = importedRows.every(r => r.isSelected);
-                                                    setImportedRows(importedRows.map(r => ({ ...r, isSelected: !allSelected })));
+                                                    const selectableRows = importedRows.filter(r => r.targetYear === currentDate.getFullYear());
+                                                    const allSelected = selectableRows.length > 0 && selectableRows.every(r => r.isSelected);
+                                                    setImportedRows(importedRows.map(r => r.targetYear !== currentDate.getFullYear() ? { ...r, isSelected: false } : { ...r, isSelected: !allSelected }));
                                                 }}
                                             >
-                                                {importedRows.every(r => r.isSelected) ? <CheckSquare size={16} /> : <Square size={16} />}
+                                                {importedRows.filter(r => r.targetYear === currentDate.getFullYear()).length > 0 && importedRows.filter(r => r.targetYear === currentDate.getFullYear()).every(r => r.isSelected) ? <CheckSquare size={16} /> : <Square size={16} />}
                                             </button>
                                         </th>
                                         <th className="p-3 w-28">Tarih</th>
@@ -1174,7 +1179,7 @@ const CashBook: React.FC<CashBookProps> = ({ canEdit = true }) => {
                                             return (
                                                 <tr key={row.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 ${!row.isSelected ? 'opacity-50 grayscale' : ''}`}>
                                                     <td className="p-3 text-center align-middle">
-                                                        <button onClick={() => toggleImportRowSelection(row.id)} className="text-pnr-purple">
+                                                        <button onClick={() => toggleImportRowSelection(row.id)} className="text-pnr-purple disabled:cursor-not-allowed disabled:text-amber-500" disabled={row.targetYear !== currentDate.getFullYear()} title={row.targetYear !== currentDate.getFullYear() ? 'Seçili yıl dışındaki satırlar aktarılmaz' : undefined}>
                                                             {row.isSelected ? <CheckSquare size={16} /> : <Square size={16} className="text-slate-300" />}
                                                         </button>
                                                     </td>

@@ -27,6 +27,38 @@ interface FinancialRow {
     isExpanded?: boolean;
 }
 
+interface CategoryDescription {
+    id: string;
+    description: string;
+}
+
+interface FinanceCategory {
+    id: string;
+    title: string;
+    type: 'income' | 'expense';
+    financial_category_descriptions: CategoryDescription[];
+}
+
+interface FinanceTransaction {
+    id?: string;
+    source?: string;
+    date: string;
+    type: 'income' | 'expense';
+    category_id?: string | null;
+    category_name?: string | null;
+    amount: number;
+    description?: string | null;
+    installment_info?: string | null;
+    notes?: string | null;
+}
+
+interface RecordMetadata {
+    subCategoryId?: string | null;
+    targetMonth?: number;
+    targetYear?: number;
+    isPersonSplitParent?: boolean;
+}
+
 // --- CONSTANTS ---
 
 const MONTH_NAMES = [
@@ -36,6 +68,116 @@ const MONTH_NAMES = [
 
 // Academic year starts in September (Index 8)
 const ACADEMIC_START_MONTH = 8;
+
+const normalizeText = (value: any) => String(value ?? '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLocaleLowerCase('tr-TR');
+
+const normalizeKey = (value: any) => normalizeText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/[^a-z0-9]/g, '');
+
+const getDescriptionParts = (description?: string | null) => description
+    ? description.split(' - ').map(part => part.trim()).filter(Boolean)
+    : [];
+
+const parsePeriodText = (period: string) => {
+    const [monthText, yearText] = period.split(/\s+/);
+    const monthIndex = MONTH_NAMES.findIndex(month => normalizeText(month) === normalizeText(monthText));
+    const yearValue = parseInt(yearText || '', 10);
+
+    return monthIndex !== -1 && !isNaN(yearValue) ? { month: monthIndex, year: yearValue } : null;
+};
+
+const getRecordMetadata = (transaction: Pick<FinanceTransaction, 'notes'>): RecordMetadata => {
+    try {
+        const metadata = JSON.parse(transaction.notes || '');
+        return metadata && typeof metadata === 'object' ? metadata as RecordMetadata : {};
+    } catch {
+        return {};
+    }
+};
+
+const getTransactionPeriod = (transaction: FinanceTransaction) => {
+    const metadata = getRecordMetadata(transaction);
+    if (typeof metadata.targetMonth === 'number' && typeof metadata.targetYear === 'number') {
+        return { month: metadata.targetMonth, year: metadata.targetYear };
+    }
+
+    const descriptionParts = getDescriptionParts(transaction.description);
+    const descriptionPeriod = parsePeriodText(descriptionParts[descriptionParts.length - 1] || '');
+    if (descriptionPeriod) return descriptionPeriod;
+
+    const date = new Date(transaction.date);
+    return isNaN(date.getTime()) ? null : { month: date.getMonth(), year: date.getFullYear() };
+};
+
+const getAcademicColumnIndex = (period: { month: number; year: number } | null, selectedYear: number) => {
+    if (!period) return -1;
+    if (period.year === selectedYear && period.month >= ACADEMIC_START_MONTH) return period.month - ACADEMIC_START_MONTH;
+    if (period.year === selectedYear + 1 && period.month < ACADEMIC_START_MONTH) return period.month + (12 - ACADEMIC_START_MONTH);
+    return -1;
+};
+
+const matchesCategory = (transaction: FinanceTransaction, category: FinanceCategory) => {
+    if (transaction.category_id && transaction.category_id === category.id) return true;
+    return normalizeKey(transaction.category_name) === normalizeKey(category.title);
+};
+
+const getSubCategoryId = (transaction: FinanceTransaction, category: FinanceCategory) => {
+    const metadata = getRecordMetadata(transaction);
+    if (metadata.subCategoryId && category.financial_category_descriptions.some(desc => desc.id === metadata.subCategoryId)) {
+        return metadata.subCategoryId;
+    }
+
+    const descriptionParts = getDescriptionParts(transaction.description);
+    const nonPeriodParts = descriptionParts.filter(part => !parsePeriodText(part));
+    const firstPart = nonPeriodParts[0] || '';
+    const fullDescription = normalizeText(transaction.description);
+
+    const exactMatch = category.financial_category_descriptions.find(desc => normalizeKey(desc.description) === normalizeKey(firstPart));
+    if (exactMatch) return exactMatch.id;
+
+    const containedMatch = category.financial_category_descriptions.find(desc => fullDescription.includes(normalizeText(desc.description)));
+    return containedMatch?.id || null;
+};
+
+const getTransactionDedupeKey = (transaction: FinanceTransaction) => {
+    const metadata = getRecordMetadata(transaction);
+    const period = getTransactionPeriod(transaction);
+    const descriptionParts = getDescriptionParts(transaction.description);
+    const nonPeriodParts = descriptionParts.filter(part => !parsePeriodText(part));
+
+    return [
+        transaction.type,
+        transaction.date,
+        Number(transaction.amount || 0).toFixed(2),
+        normalizeKey(transaction.category_id || transaction.category_name),
+        normalizeKey(metadata.subCategoryId || nonPeriodParts[0]),
+        period ? `${period.year}-${period.month}` : '',
+        normalizeKey(transaction.description),
+        normalizeKey(transaction.installment_info)
+    ].join('|');
+};
+
+const dedupeTransactions = (transactions: FinanceTransaction[]) => {
+    const seenSourcesByKey = new Map<string, Set<string>>();
+
+    return transactions.filter(transaction => {
+        const key = getTransactionDedupeKey(transaction);
+        const source = transaction.source || 'unknown';
+        const seenSources = seenSourcesByKey.get(key);
+
+        if (seenSources && !seenSources.has(source)) return false;
+
+        seenSourcesByKey.set(key, new Set([...(seenSources || []), source]));
+        return true;
+    });
+};
 
 interface ProfitabilityProps {
     canEdit?: boolean;
@@ -68,12 +210,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ canEdit = true }) => {
     }, [selectedYear]);
 
     // --- 2. FETCH AND PROCESS DATA ---
-    const fetchData = async () => {
-        setLoading(true);
+    const fetchData = async (shouldApplyResult: () => boolean = () => true) => {
+        if (shouldApplyResult()) setLoading(true);
         try {
-            const startDate = new Date(selectedYear, ACADEMIC_START_MONTH, 1).toISOString();
-            const endDate = new Date(selectedYear + 1, ACADEMIC_START_MONTH, 0).toISOString(); // End of Aug next year
-
             // A. Fetch Structure (Categories & Descriptions)
             const { data: categories, error: catError } = await supabase
                 .from('financial_categories')
@@ -87,10 +226,10 @@ const Profitability: React.FC<ProfitabilityProps> = ({ canEdit = true }) => {
 
             // B. Fetch Transactions from ALL Sources
             const [cashRes, denizRes, posRes, vakifRes] = await Promise.all([
-                supabase.from('cash_book').select('*').gte('date', startDate).lte('date', endDate),
-                supabase.from('denizbank_book').select('*').gte('date', startDate).lte('date', endDate),
-                supabase.from('denizbank_pos_book').select('*').gte('date', startDate).lte('date', endDate),
-                supabase.from('vakifbank_book').select('*').gte('date', startDate).lte('date', endDate)
+                supabase.from('cash_book').select('*'),
+                supabase.from('denizbank_book').select('*'),
+                supabase.from('denizbank_pos_book').select('*'),
+                supabase.from('vakifbank_book').select('*')
             ]);
 
             if (cashRes.error) throw cashRes.error;
@@ -99,18 +238,21 @@ const Profitability: React.FC<ProfitabilityProps> = ({ canEdit = true }) => {
             if (vakifRes.error) throw vakifRes.error;
 
             // Merge all transactions into a single array
-            const allTransactions = [
-                ...(cashRes.data || []),
-                ...(denizRes.data || []),
-                ...(posRes.data || []),
-                ...(vakifRes.data || [])
-            ];
+            const withSource = (source: string, rows: any[] = []) => rows.map(row => ({ ...row, source })) as FinanceTransaction[];
+            const allTransactions = dedupeTransactions([
+                ...withSource('cash_book', cashRes.data || []),
+                ...withSource('denizbank_book', denizRes.data || []),
+                ...withSource('denizbank_pos_book', posRes.data || []),
+                ...withSource('vakifbank_book', vakifRes.data || [])
+            ]);
+
+            const financeCategories = (categories || []) as FinanceCategory[];
 
             // C. Process Data
             const processCategoryType = (type: 'income' | 'expense'): FinancialRow[] => {
-                return (categories || [])
-                    .filter((cat: any) => cat.type === type)
-                    .map((cat: any) => {
+                const categoriesForType = financeCategories.filter(cat => cat.type === type);
+                const processedRows = categoriesForType
+                    .map(cat => {
 
                         // 1. Initialize Main Row
                         const row: FinancialRow = {
@@ -126,8 +268,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ canEdit = true }) => {
                         const subRowsMap: Record<string, FinancialRow> = {};
 
                         // Add defined sub-items from 'financial_category_descriptions'
-                        cat.financial_category_descriptions.forEach((desc: any) => {
-                            subRowsMap[desc.description] = {
+                        cat.financial_category_descriptions.forEach(desc => {
+                            subRowsMap[desc.id] = {
                                 id: desc.id,
                                 title: desc.description,
                                 type: type,
@@ -139,7 +281,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ canEdit = true }) => {
                         // Add a dynamic "Diğer" (Other) bucket for unclassified transactions in this category
                         const otherId = `other-${cat.id}`;
                         const otherTitle = 'Diğer / Belirtilmemiş';
-                        subRowsMap[otherTitle] = {
+                        subRowsMap[otherId] = {
                             id: otherId,
                             title: otherTitle,
                             type: type,
@@ -148,44 +290,31 @@ const Profitability: React.FC<ProfitabilityProps> = ({ canEdit = true }) => {
                         };
 
                         // 3. Aggregate Transactions (Using merged allTransactions)
-                        const catTransactions = (allTransactions || []).filter((t: any) => t.category_id === cat.id);
+                        const catTransactions = allTransactions.filter(transaction =>
+                            transaction.type === type
+                            && !getRecordMetadata(transaction).isPersonSplitParent
+                            && matchesCategory(transaction, cat)
+                        );
 
-                        catTransactions.forEach((t: any) => {
-                            const tDate = new Date(t.date);
-                            const tYear = tDate.getFullYear();
-                            const tMonth = tDate.getMonth();
-
-                            // Find column index
-                            let colIndex = -1;
-                            if (tYear === selectedYear && tMonth >= ACADEMIC_START_MONTH) {
-                                colIndex = tMonth - ACADEMIC_START_MONTH;
-                            } else if (tYear === selectedYear + 1 && tMonth < ACADEMIC_START_MONTH) {
-                                colIndex = tMonth + (12 - ACADEMIC_START_MONTH);
-                            }
+                        catTransactions.forEach(transaction => {
+                            const colIndex = getAcademicColumnIndex(getTransactionPeriod(transaction), selectedYear);
 
                             if (colIndex >= 0 && colIndex < 12) {
                                 // Add to Main Row
-                                row.monthlyValues[colIndex] += t.amount;
-                                row.total += t.amount;
+                                const amount = Number(transaction.amount) || 0;
+                                row.monthlyValues[colIndex] += amount;
+                                row.total += amount;
 
                                 // Add to Sub Row
-                                let targetSubTitle = otherTitle;
+                                const targetSubId = getSubCategoryId(transaction, cat) || otherId;
 
-                                // Fuzzy match: Check if transaction description contains any defined sub-item description
-                                for (const desc of cat.financial_category_descriptions) {
-                                    if (t.description && t.description.toLowerCase().includes(desc.description.toLowerCase())) {
-                                        targetSubTitle = desc.description;
-                                        break;
-                                    }
-                                }
-
-                                if (subRowsMap[targetSubTitle]) {
-                                    subRowsMap[targetSubTitle].monthlyValues[colIndex] += t.amount;
-                                    subRowsMap[targetSubTitle].total += t.amount;
+                                if (subRowsMap[targetSubId]) {
+                                    subRowsMap[targetSubId].monthlyValues[colIndex] += amount;
+                                    subRowsMap[targetSubId].total += amount;
                                 } else {
                                     // Fallback if map key missing (shouldn't happen)
-                                    subRowsMap[otherTitle].monthlyValues[colIndex] += t.amount;
-                                    subRowsMap[otherTitle].total += t.amount;
+                                    subRowsMap[otherId].monthlyValues[colIndex] += amount;
+                                    subRowsMap[otherId].total += amount;
                                 }
                             }
                         });
@@ -207,21 +336,75 @@ const Profitability: React.FC<ProfitabilityProps> = ({ canEdit = true }) => {
 
                         return row;
                     });
+
+                const unmatchedRow: FinancialRow = {
+                    id: `unmatched-${type}`,
+                    title: 'Tanımsız',
+                    type,
+                    monthlyValues: new Array(12).fill(0),
+                    total: 0,
+                    subRows: [{
+                        id: `unmatched-${type}-detail`,
+                        title: 'Kategori eşleşmeyen',
+                        type,
+                        monthlyValues: new Array(12).fill(0),
+                        total: 0
+                    }]
+                };
+
+                allTransactions
+                    .filter(transaction =>
+                        transaction.type === type
+                        && !getRecordMetadata(transaction).isPersonSplitParent
+                        && !categoriesForType.some(cat => matchesCategory(transaction, cat))
+                    )
+                    .forEach(transaction => {
+                        const colIndex = getAcademicColumnIndex(getTransactionPeriod(transaction), selectedYear);
+                        if (colIndex < 0 || colIndex >= 12) return;
+
+                        const amount = Number(transaction.amount) || 0;
+                        unmatchedRow.monthlyValues[colIndex] += amount;
+                        unmatchedRow.total += amount;
+                        unmatchedRow.subRows![0].monthlyValues[colIndex] += amount;
+                        unmatchedRow.subRows![0].total += amount;
+                    });
+
+                return unmatchedRow.total !== 0 ? [...processedRows, unmatchedRow] : processedRows;
             };
+
+            if (!shouldApplyResult()) return;
 
             setIncomeData(processCategoryType('income'));
             setExpenseData(processCategoryType('expense'));
 
         } catch (err: any) {
             console.error(err);
-            alert('Veri hatası: ' + err.message);
+            if (shouldApplyResult()) alert('Veri hatası: ' + err.message);
         } finally {
-            setLoading(false);
+            if (shouldApplyResult()) setLoading(false);
         }
     };
 
     useEffect(() => {
-        fetchData();
+        let isActive = true;
+        const refreshData = () => fetchData(() => isActive);
+
+        refreshData();
+
+        const channel = supabase
+            .channel(`profitability-live-${selectedYear}`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_book' }, refreshData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'denizbank_book' }, refreshData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'denizbank_pos_book' }, refreshData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'vakifbank_book' }, refreshData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_categories' }, refreshData)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_category_descriptions' }, refreshData)
+            .subscribe();
+
+        return () => {
+            isActive = false;
+            supabase.removeChannel(channel);
+        };
     }, [selectedYear]);
 
     // --- ACTIONS ---
@@ -286,7 +469,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ canEdit = true }) => {
                     </div>
 
                     <button
-                        onClick={fetchData}
+                        onClick={() => fetchData()}
                         className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-500 transition-colors"
                     >
                         <RefreshCcw size={20} className={loading ? 'animate-spin' : ''} />

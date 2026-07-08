@@ -3,11 +3,14 @@
 CREATE TABLE IF NOT EXISTS category_automation_rules (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     keyword TEXT NOT NULL,
+    account_scope TEXT NOT NULL DEFAULT 'all',
     category_id UUID REFERENCES financial_categories(id) ON DELETE CASCADE,
     sub_category_id UUID REFERENCES financial_category_descriptions(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE category_automation_rules ADD COLUMN IF NOT EXISTS account_scope TEXT NOT NULL DEFAULT 'all';
 
 -- Enable RLS
 ALTER TABLE category_automation_rules ENABLE ROW LEVEL SECURITY;
